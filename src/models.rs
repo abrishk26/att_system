@@ -23,6 +23,16 @@ pub struct AttendanceRecord {
     pub status: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AttendanceRecordWithStudent {
+    pub id: Uuid,
+    pub student_id: Uuid,
+    pub session_id: Uuid,
+    pub status: String,
+    pub student_name: String,
+    pub nfc_id: String,
+}
+
 #[derive(Deserialize)]
 pub struct CreateSessionRequest {
     pub instructor_id: Uuid,
@@ -46,4 +56,36 @@ pub struct UpdateRecordRequest {
     pub nfc_id: String,
     pub session_id: Uuid,
     pub status: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Course {
+    pub id: Uuid,
+    pub course_id: String,
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Class {
+    pub id: Uuid,
+    pub year: i32,
+    pub section: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Assignment {
+    pub id: Uuid,
+    pub instructor_id: Uuid,
+    pub class_id: Uuid,
+    pub course_id: Uuid,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct UserProfile {
+    pub id: String,
+    pub username: String,
+    pub first_name: String,
+    pub last_name: Option<String>,
+    pub role: String,
+    pub img_url: Option<String>,
 }
