@@ -13,9 +13,11 @@ cargo run
 
 ## API Documentation
 
-### Authentication
+### 🔐 Authentication
 
 Modern JWT-based authentication is used. The `/login` endpoint provides an `access_token` and a `refresh_token`.
+
+Most protected routes require the `Authorization: Bearer <access_token>` header.
 
 #### Login
 - **URL**: `/login`
@@ -55,7 +57,65 @@ Modern JWT-based authentication is used. The `/login` endpoint provides an `acce
 
 ---
 
-### Sessions
+### 👤 User Profile & Data
+
+#### Get Profile
+- **URL**: `/profile`
+- **Method**: `GET`
+- **Success Response**: `200 OK`
+  ```json
+  {
+    "id": "string",
+    "username": "string",
+    "first_name": "string",
+    "last_name": "string",
+    "role": "string",
+    "img_url": "string"
+  }
+  ```
+
+#### Get Instructor Assignments
+- **URL**: `/instructor/assignments`
+- **Method**: `GET`
+- **Success Response**: `200 OK`
+  ```json
+  [
+    {
+      "id": "UUID",
+      "instructor_id": "UUID",
+      "class_id": "UUID",
+      "course_id": "UUID"
+    }
+  ]
+  ```
+
+#### Get Student Courses
+- **URL**: `/student/courses`
+- **Method**: `GET`
+- **Success Response**: `200 OK`
+  ```json
+  [
+    {
+      "id": "UUID",
+      "course_id": "string",
+      "name": "string"
+    }
+  ]
+  ```
+
+#### Get Course Details
+- **URL**: `/course/:course_id`
+- **Method**: `GET`
+- **Success Response**: `200 OK`
+
+#### Get Class Details
+- **URL**: `/class/:class_id`
+- **Method**: `GET`
+- **Success Response**: `200 OK`
+
+---
+
+### 📅 Sessions
 
 #### Create Session
 - **URL**: `/session/create`
@@ -69,15 +129,6 @@ Modern JWT-based authentication is used. The `/login` endpoint provides an `acce
   }
   ```
 - **Success Response**: `201 Created`
-  ```json
-  {
-    "id": "UUID",
-    "instructor_id": "UUID",
-    "class_id": "UUID",
-    "course_id": "UUID",
-    "status": "incoming"
-  }
-  ```
 
 #### Update Session Status
 - **URL**: `/session/update`
@@ -89,58 +140,29 @@ Modern JWT-based authentication is used. The `/login` endpoint provides an `acce
     "status": "string"
   }
   ```
-- **Success Response**: `200 OK`
-  ```json
-  {
-    "id": "UUID",
-    "instructor_id": "UUID",
-    "class_id": "UUID",
-    "course_id": "UUID",
-    "status": "string"
-  }
-  ```
 
 #### List All Sessions
 - **URL**: `/session`
 - **Method**: `GET`
-- **Success Response**: `200 OK`
-  ```json
-  [
-    {
-      "id": "UUID",
-      "instructor_id": "UUID",
-      "class_id": "UUID",
-      "course_id": "UUID",
-      "status": "string"
-    }
-  ]
-  ```
+
+#### List My Instructor Sessions
+- **URL**: `/sessions/instructor`
+- **Method**: `GET`
+Returns sessions belonging to the logged-in instructor.
+
+#### List My Student Attendance
+- **URL**: `/sessions/student`
+- **Method**: `GET`
+Returns attendance records belonging to the logged-in student.
 
 ---
 
-### Attendance Records
+### ✅ Attendance Records
 
 #### Create Records for Session
 Initializes attendance records for all students in the class associated with the session.
 - **URL**: `/record/create`
 - **Method**: `POST`
-- **Request Body**:
-  ```json
-  {
-    "session_id": "UUID"
-  }
-  ```
-- **Success Response**: `201 Created`
-  ```json
-  [
-    {
-      "id": "UUID",
-      "student_id": "UUID",
-      "session_id": "UUID",
-      "status": "absent"
-    }
-  ]
-  ```
 
 #### Update Attendance (Mark Attendance)
 Marks a student's attendance using their NFC ID.
@@ -154,20 +176,11 @@ Marks a student's attendance using their NFC ID.
     "status": "string"
   }
   ```
-- **Success Response**: `200 OK`
-  ```json
-  {
-    "id": "UUID",
-    "student_id": "UUID",
-    "session_id": "UUID",
-    "status": "string"
-  }
-  ```
 
-#### Get Records for Session
+#### Get Enriched Records for Session
+Returns records with associated student names and details.
 - **URL**: `/record/:session_id`
 - **Method**: `GET`
-- **Path Parameters**: `session_id` (UUID)
 - **Success Response**: `200 OK`
   ```json
   [
@@ -175,14 +188,16 @@ Marks a student's attendance using their NFC ID.
       "id": "UUID",
       "student_id": "UUID",
       "session_id": "UUID",
-      "status": "string"
+      "status": "string",
+      "student_name": "string",
+      "nfc_id": "string"
     }
   ]
   ```
 
 ---
 
-### Error Responses
+### ❌ Error Responses
 All endpoints may return an error response in the following format:
 ```json
 {
