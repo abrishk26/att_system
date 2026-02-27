@@ -670,8 +670,8 @@ async fn main() {
         .route("/profile", get(get_profile))
         .route("/instructor/assignments", get(get_instructor_assignments))
         .route("/student/courses", get(get_student_courses))
-        .route("/course/:course_id", get(get_course_details))
-        .route("/class/:class_id", get(get_class_details))
+        .route("/course/{course_id}", get(get_course_details))
+        .route("/class/{class_id}", get(get_class_details))
         .route("/session/create", post(create_session_handler))
         .route("/record/create", post(create_record_handler))
         .route("/session/update", patch(update_session_handler))
@@ -679,7 +679,7 @@ async fn main() {
         .route("/sessions/instructor", get(get_sessions_by_instructor))
         .route("/sessions/student", get(get_sessions_by_student))
         .route("/session", get(get_sessions))
-        .route("/record/:session_id", get(get_records_with_student_info))
+        .route("/record/{session_id}", get(get_records_with_student_info))
         .with_state(app_state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001")
         .await
