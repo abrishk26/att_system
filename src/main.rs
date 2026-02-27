@@ -12,6 +12,8 @@ use axum::{
     http::{StatusCode, request::Parts},
     routing::{get, patch, post},
 };
+use dotenvy::dotenv_override;
+use env_logger::Env;
 use diesel::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use diesel_async::{
     AsyncPgConnection,
@@ -654,10 +656,11 @@ where
 
 #[tokio::main]
 async fn main() {
-    env_logger::init();
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    dotenv_override().ok();
 
     let db_url = std::env::var("DATABASE_URL").unwrap();
-
+    log::info!("Database Url: {}", db_url);
     // set up connection pool
     let config = AsyncDieselConnectionManager::<diesel_async::AsyncPgConnection>::new(db_url);
     let pool = bb8::Pool::builder().build(config).await.unwrap();
