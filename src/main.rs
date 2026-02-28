@@ -1,6 +1,7 @@
 mod models;
 mod schema;
 
+use rust_embed::Embed;
 use crate::models::{
     Assignment, AttendanceRecord, AttendanceRecordWithStudent, Class, Course, CreateRecordRequest,
     CreateSessionRequest, Session, UpdateRecordRequest, UpdateSessionRequest, UserProfile,
@@ -25,6 +26,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 type Pool = bb8::Pool<AsyncPgConnection>;
+
+#[derive(Embed)]
+#[folder = "ui/dist"]
+struct Assets;
 
 #[derive(Serialize, Deserialize)]
 struct LoginData {
@@ -654,6 +659,32 @@ where
     )
 }
 
+async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
+    use axum::response::IntoResponse;
+
+    let path = uri.path().trim_start_matches('/');
+
+    // Try to serve the exact file first
+    if let Some(content) = Assets::get(path) {
+        let mime = mime_guess::from_path(path).first_or_octet_stream();
+        return (
+            [(axum::http::header::CONTENT_TYPE, mime.as_ref())],
+            content.data.into_owned(),
+        )
+            .into_response();
+    }
+
+    // SPA fallback: serve index.html for all other routes
+    match Assets::get("index.html") {
+        Some(content) => (
+            [(axum::http::header::CONTENT_TYPE, "text/html")],
+            content.data.into_owned(),
+        )
+            .into_response(),
+        None => axum::http::StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 #[tokio::main]
 async fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
@@ -667,7 +698,6 @@ async fn main() {
     let client = ClientBuilder::new().build().unwrap();
     let app_state = AppState { client, pool };
     let app = Router::new()
-        .route("/", get(|| async { "Hello, World!\n" }))
         .route("/login", post(login_handler))
         .route("/refresh", post(refresh_handler))
         .route("/profile", get(get_profile))
@@ -683,6 +713,7 @@ async fn main() {
         .route("/sessions/student", get(get_sessions_by_student))
         .route("/session", get(get_sessions))
         .route("/record/{session_id}", get(get_records_with_student_info))
+        .fallback(static_handler)
         .with_state(app_state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001")
         .await
