@@ -2,6 +2,19 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+
+#[derive(Queryable, Selectable, Insertable, Serialize, Deserialize, Debug, Clone)]
+#[diesel(table_name = crate::schema::permissions)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct Permission {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    pub student_id: Uuid,
+    pub description: String,
+    pub img_url: Option<String>,
+    pub status: String,
+}
+
 #[derive(Queryable, Selectable, Insertable, Serialize, Deserialize, Debug, Clone)]
 #[diesel(table_name = crate::schema::sessions)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
