@@ -197,6 +197,39 @@ Returns records with associated student names and details.
 
 ---
 
+### 🛡 Permissions Management
+
+#### (Student) Submit Permission
+Submits a new permission request with an optional file upload.
+- **URL**: `/student/permissions`
+- **Method**: `POST`
+- **Body**: `multipart/form-data`
+    - `session_id`: UUID
+    - `description`: String
+    - `file`: File (optional)
+
+#### (Student) List My Permissions
+- **URL**: `/student/permissions`
+- **Method**: `GET`
+
+#### (Instructor) List Session Permissions
+Returns all permissions submitted for a specific session.
+- **URL**: `/instructor/permissions/:session_id`
+- **Method**: `GET`
+
+#### (Instructor) Update Permission Status
+Updates the status of a permission.
+- **URL**: `/instructor/permissions/update/:id`
+- **Method**: `PATCH`
+- **Request Body**:
+  ```json
+  {
+    "status": "accepted" | "rejected" | "pending"
+  }
+  ```
+
+---
+
 ### ❌ Error Responses
 All endpoints may return an error response in the following format:
 ```json
