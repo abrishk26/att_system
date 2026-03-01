@@ -3,8 +3,9 @@ use axum::{extract::{State, Path}, Json, http::{StatusCode, Method}};
 use crate::models::{
     Assignment, AttendanceRecord, Class, Course, CreateRecordRequest,
     CreateSessionRequest, Session, UpdateSessionRequest, UserProfile,
+    Permission, PermissionWithStudent, UpdatePermissionStatusRequest,
 };
-use crate::schema::{sessions, attendance_record};
+use crate::schema::{sessions, attendance_record, permissions};
 use crate::helpers::internal_error;
 use uuid::Uuid;
 use diesel::{ExpressionMethods, QueryDsl};
@@ -246,4 +247,77 @@ pub async fn get_sessions_by_instructor(
         .map_err(internal_error)?;
 
     Ok((StatusCode::OK, Json(sessions)))
+}
+
+pub async fn get_permissions_by_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<Uuid>,
+    _: ClaimsExtractor,
+) -> Result<(StatusCode, Json<Vec<PermissionWithStudent>>), (StatusCode, Json<ErrorResponse>)> {
+    use diesel_async::RunQueryDsl;
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
+
+    let found_permissions = permissions::table
+        .filter(permissions::session_id.eq(session_id))
+        .load::<Permission>(&mut conn)
+        .await
+        .map_err(internal_error)?;
+
+    let mut enriched_permissions = Vec::new();
+
+    for permission in found_permissions {
+        let response = state
+            .client
+            .request(
+                Method::GET,
+                format!(
+                    "http://127.0.0.1:3000/student/profile?id={}",
+                    permission.student_id
+                ),
+            )
+            .send()
+            .await
+            .map_err(internal_error)?;
+
+        let student_name = if response.status() == StatusCode::OK {
+            let student_info = response.json::<UserProfile>().await.map_err(internal_error)?;
+            format!(
+                "{} {}",
+                student_info.first_name,
+                student_info.last_name.unwrap_or_default()
+            )
+        } else {
+            "Unknown Student".to_string()
+        };
+
+        enriched_permissions.push(PermissionWithStudent {
+            id: permission.id,
+            session_id: permission.session_id,
+            student_id: permission.student_id,
+            student_name,
+            description: permission.description,
+            img_url: permission.img_url,
+            status: permission.status,
+        });
+    }
+
+    Ok((StatusCode::OK, Json(enriched_permissions)))
+}
+
+pub async fn update_permission_handler(
+    State(state): State<AppState>,
+    Path(permission_id): Path<Uuid>,
+    _: ClaimsExtractor,
+    Json(payload): Json<UpdatePermissionStatusRequest>,
+) -> Result<(StatusCode, Json<Permission>), (StatusCode, Json<ErrorResponse>)> {
+    use diesel_async::RunQueryDsl;
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
+
+    let updated_permission = diesel::update(permissions::table.find(permission_id))
+        .set(permissions::status.eq(payload.status))
+        .get_result::<Permission>(&mut conn)
+        .await
+        .map_err(internal_error)?;
+
+    Ok((StatusCode::OK, Json(updated_permission)))
 }

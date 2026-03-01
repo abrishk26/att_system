@@ -102,3 +102,19 @@ pub struct UserProfile {
     pub role: String,
     pub img_url: Option<String>,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PermissionWithStudent {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    pub student_id: Uuid,
+    pub student_name: String,
+    pub description: String,
+    pub img_url: Option<String>,
+    pub status: String,
+}
+
+#[derive(Deserialize)]
+pub struct UpdatePermissionStatusRequest {
+    pub status: String,
+}
