@@ -17,6 +17,8 @@ pub fn new(app_state: AppState) -> Router {
             .route("/record/update", patch(mark_attendance_handler))
             .route("/sessions/instructor", get(get_sessions_by_instructor))
             .route("/sessions/student", get(get_sessions_by_student))
+            .route("/student/permissions", get(get_student_permissions))
+            .route("/student/permissions", post(create_permission_handler))
             .route("/session", get(get_sessions))
             .route("/record/{session_id}", get(get_records_with_student_info))
             .fallback(static_handler)
