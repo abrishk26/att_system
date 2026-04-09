@@ -1,8 +1,15 @@
 use axum::{Router, routing::{get, post, patch}};
+use axum::http::{HeaderValue, Method};
+use tower_http::cors::{Any, CorsLayer};
 use crate::handlers::{static_handler, login_handler, refresh_handler, students::*, instructors::*};
 use crate::types::AppState;
 
 pub fn new(app_state: AppState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin("http://localhost:5173".parse::<HeaderValue>().unwrap())
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::OPTIONS])
+        .allow_headers(Any);
+
     Router::new()
             .route("/login", post(login_handler))
             .route("/refresh", post(refresh_handler))
@@ -23,6 +30,7 @@ pub fn new(app_state: AppState) -> Router {
             .route("/student/permissions", post(create_permission_handler))
             .route("/session", get(get_sessions))
             .route("/record/{session_id}", get(get_records_with_student_info))
+            .layer(cors)
             .fallback(static_handler)
             .with_state(app_state)
 }

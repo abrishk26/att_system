@@ -1,35 +1,35 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import LoginPage from './pages/LoginPage.tsx';
+import StudentDashboard from './pages/student/StudentDashboard';
+import HomePage from './pages/student/HomePage';
+import SchedulePage from './pages/student/SchedulePage';
+import AttendanceHistoryPage from './pages/student/AttendanceHistoryPage';
+import CourseDetailPage from './pages/student/CourseDetailPage';
+import PermissionsPage from './pages/student/PermissionsPage';
+import NotificationsPage from './pages/student/NotificationsPage';
+import ProfilePage from './pages/student/ProfilePage';
 
 function App() {
-  const [count, setCount] = useState(0)
+  const hasToken = Boolean(localStorage.getItem('auth_token'));
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Navigate to={hasToken ? '/student/home' : '/login'} replace />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/student" element={<StudentDashboard />}>
+          <Route path="home" element={<HomePage />} />
+          <Route path="schedule" element={<SchedulePage />} />
+          <Route path="history" element={<AttendanceHistoryPage />} />
+          <Route path="course/:courseId" element={<CourseDetailPage />} />
+          <Route path="permissions" element={<PermissionsPage />} />
+          <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="profile" element={<ProfilePage />} />
+        </Route>
+        <Route path="*" element={<Navigate to={hasToken ? '/student/home' : '/login'} replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
-export default App
+export default App;
