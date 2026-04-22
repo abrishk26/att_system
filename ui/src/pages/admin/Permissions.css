@@ -1,0 +1,56 @@
+.permissions-page {
+  max-width: 1000px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.session-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-picker label {
+  color: #9ca3af;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.perms-table-wrap {
+  background: #1a1d2e;
+  border: 1px solid #2a2d3e;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.badge-perm-pending {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.badge-perm-accepted {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.badge-perm-rejected {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+.btn-red {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+.empty-prompt {
+  color: #6b7280;
+  font-size: 13px;
+  text-align: center;
+  padding: 60px 0;
+  background: #1a1d2e;
+  border: 1px solid #2a2d3e;
+  border-radius: 12px;
+}

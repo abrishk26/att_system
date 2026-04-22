@@ -24,43 +24,32 @@ interface BackendCourse {
 
 /**
  * Fetches the overall attendance history for a given student.
- * The backend calculates the summary for each course the student is enrolled in.
- *
- * @param studentId - The unique identifier of the student.
- * @returns A promise that resolves to an array of course attendance summaries.
+ * Uses registered courses as the primary source to ensure all enrolled courses are shown.
  */
 export async function getAttendanceHistory(studentId: string): Promise<CourseAttendance[]> {
   void studentId;
 
-  const [attendanceRecords, sessions] = await Promise.all([
+  const [attendanceRecords, allSessions, registeredCourses] = await Promise.all([
     fetcher<BackendAttendanceRecord[]>('/sessions/student'),
-    fetcher<BackendSession[]>('/session'),
+    fetcher<BackendSession[]>('/student/sessions'),
+    fetcher<BackendCourse[]>('/student/courses'),
   ]);
 
-  const sessionsById = new Map(sessions.map(session => [session.id, session]));
+  const sessionsById = new Map(allSessions.map(session => [session.id, session]));
+  
+  // Group attendance records by course_id
   const recordsByCourse = new Map<string, BackendAttendanceRecord[]>();
-
   for (const record of attendanceRecords) {
     const session = sessionsById.get(record.session_id);
-    if (!session) {
-      continue;
+    if (session) {
+      const current = recordsByCourse.get(session.course_id) ?? [];
+      current.push(record);
+      recordsByCourse.set(session.course_id, current);
     }
-
-    const currentRecords = recordsByCourse.get(session.course_id) ?? [];
-    currentRecords.push(record);
-    recordsByCourse.set(session.course_id, currentRecords);
   }
 
-  const courseIds = Array.from(recordsByCourse.keys());
-  const courses = await Promise.all(
-    courseIds.map((courseId) => fetcher<BackendCourse>(`/course/${courseId}`))
-  );
-
-  const courseById = new Map(courses.map(course => [course.id, course]));
-
-  return courseIds.map((courseId) => {
-    const course = courseById.get(courseId);
-    const courseRecords = recordsByCourse.get(courseId) ?? [];
+  return registeredCourses.map((course) => {
+    const courseRecords = recordsByCourse.get(course.id) ?? [];
     const totalSessions = courseRecords.length;
     const present = courseRecords.filter(record => record.status === 'present').length;
     const late = courseRecords.filter(record => record.status === 'late').length;
@@ -68,9 +57,9 @@ export async function getAttendanceHistory(studentId: string): Promise<CourseAtt
     const excused = courseRecords.filter(record => record.status === 'excused').length;
 
     return {
-      courseId,
-      courseCode: course?.course_id ?? courseId,
-      courseName: course?.name ?? 'Unknown course',
+      courseId: course.id,
+      courseCode: course.course_id,
+      courseName: course.name,
       totalSessions,
       present,
       late,
@@ -83,21 +72,17 @@ export async function getAttendanceHistory(studentId: string): Promise<CourseAtt
 
 /**
  * Fetches the detailed session-by-session attendance record for a specific course.
- *
- * @param studentId - The unique identifier of the student.
- * @param courseId - The unique identifier of the course.
- * @returns A promise that resolves to an array of individual session records.
  */
 export async function getCourseDetail(studentId: string, courseId: string): Promise<SessionRecord[]> {
   void studentId;
 
-  const [attendanceRecords, sessions, course] = await Promise.all([
+  const [attendanceRecords, allSessions, course] = await Promise.all([
     fetcher<BackendAttendanceRecord[]>('/sessions/student'),
     fetcher<BackendSession[]>('/session'),
     fetcher<BackendCourse>(`/course/${courseId}`),
   ]);
 
-  const sessionsById = new Map(sessions.map(session => [session.id, session]));
+  const sessionsById = new Map(allSessions.map(session => [session.id, session]));
 
   const results: SessionRecord[] = [];
 
