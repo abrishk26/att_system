@@ -168,6 +168,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "tokio",
+ "tower-http",
  "uuid",
 ]
 
