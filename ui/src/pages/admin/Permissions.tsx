@@ -112,7 +112,7 @@ export default function Permissions() {
                   <td>
                     {p.status === 'pending' && (
                       <div className="action-btns">
-                        <button className="btn-sm btn-green" onClick={() => handleUpdate(p.id, 'approved')}>Approve</button>
+                        <button className="btn-sm btn-green" onClick={() => handleUpdate(p.id, 'accepted')}>Approve</button>
                         <button className="btn-sm btn-red" onClick={() => handleUpdate(p.id, 'rejected')}>Reject</button>
                       </div>
                     )}

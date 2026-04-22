@@ -9,6 +9,17 @@ export interface UserProfile {
   last_name?: string;
   role: string;
   img_url?: string;
+  nfc_id?: string;
+}
+
+export interface StudentProfile {
+  id: string;
+  nfc_id: string;
+  first_name: string;
+  last_name?: string;
+  username: string;
+  img_url?: string;
+  attendance_percentage?: number;
 }
 
 export interface Course {
@@ -50,14 +61,17 @@ export interface AttendanceRecordWithStudent extends AttendanceRecord {
   nfc_id: string;
 }
 
-export interface PermissionWithStudent {
+export interface Permission {
   id: string;
   session_id: string;
   student_id: string;
-  student_name: string;
   description: string;
   img_url?: string;
   status: string;
+}
+
+export interface PermissionWithStudent extends Permission {
+  student_name: string;
 }
 
 export interface DashboardStats {
@@ -97,6 +111,8 @@ export interface ActivityItem {
   time: string;
 }
 
+let onTokenUpdate: ((token: string | null) => void) | null = null;
+
 async function refreshAccessToken(): Promise<string | null> {
   const refresh_token = localStorage.getItem('refresh_token');
   if (!refresh_token) return null;
@@ -106,33 +122,42 @@ async function refreshAccessToken(): Promise<string | null> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (onTokenUpdate) onTokenUpdate(null);
+      return null;
+    }
     const data = await res.json();
     localStorage.setItem('access_token', data.access_token);
     localStorage.setItem('refresh_token', data.refresh_token);
+    if (onTokenUpdate) onTokenUpdate(data.access_token);
     return data.access_token;
   } catch {
+    if (onTokenUpdate) onTokenUpdate(null);
     return null;
   }
 }
 
-function authHeaders(token?: string): HeadersInit {
+function authHeaders(token?: string, isMultipart = false): HeadersInit {
   const t = token ?? localStorage.getItem('access_token');
-  return t
-    ? { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' }
-    : { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = {};
+  if (t) headers['Authorization'] = `Bearer ${t}`;
+  if (!isMultipart) headers['Content-Type'] = 'application/json';
+  return headers;
 }
 
-async function request<T>(path: string, options?: RequestInit, retry = true): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers: authHeaders() });
+export async function request<T>(path: string, options?: RequestInit, retry = true): Promise<T> {
+  const isMultipart = options?.body instanceof FormData;
+  const res = await fetch(`${BASE_URL}${path}`, { 
+    ...options, 
+    headers: { ...authHeaders(undefined, isMultipart), ...options?.headers } 
+  });
 
   if (res.status === 401 && retry && path !== '/login') {
-    // Only try to refresh token if this is not a login request
     const newToken = await refreshAccessToken();
     if (newToken) {
       const res2 = await fetch(`${BASE_URL}${path}`, {
         ...options,
-        headers: authHeaders(newToken),
+        headers: { ...authHeaders(newToken, isMultipart), ...options?.headers },
       });
       if (res2.ok) return res2.json();
       localStorage.removeItem('access_token');
@@ -172,8 +197,12 @@ async function request<T>(path: string, options?: RequestInit, retry = true): Pr
 }
 
 export const api = {
+  request,
+  setOnTokenUpdate: (cb: (token: string | null) => void) => {
+    onTokenUpdate = cb;
+  },
   login: (username: string, password: string) =>
-    request<{ access_token: string; refresh_token: string }>('/login', {
+    request<{ access_token: string; refresh_token: string; role: string }>('/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
@@ -185,6 +214,7 @@ export const api = {
   instructorSessions: () => request<Session[]>('/sessions/instructor'),
 
   allSessions: () => request<Session[]>('/session'),
+  studentSessionsFull: () => request<Session[]>('/student/sessions'),
 
   courseDetails: (id: string) => request<Course>(`/course/${id}`),
 
@@ -192,6 +222,9 @@ export const api = {
 
   sessionRecords: (sessionId: string) =>
     request<AttendanceRecordWithStudent[]>(`/record/${sessionId}`),
+
+  allPermissions: () =>
+    request<PermissionWithStudent[]>('/instructor/permissions'),
 
   permissionsBySession: (sessionId: string) =>
     request<PermissionWithStudent[]>(`/instructor/permissions/${sessionId}`),
@@ -210,6 +243,28 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ session_id, status }),
     }),
+
+  // Student Endpoints
+  studentCourses: () => request<Course[]>('/student/courses'),
+  
+  studentSessions: () => request<AttendanceRecord[]>('/sessions/student'),
+  
+  studentPermissions: () => request<Permission[]>('/student/permissions'),
+  
+  createPermission: (formData: FormData) => 
+    request<Permission>('/student/permissions', {
+      method: 'POST',
+      body: formData,
+    }),
+
+  studentCount: (courseId: string, classId: string) =>
+    request<number>(`/instructor/student-count?course_id=${courseId}&class_id=${classId}`),
+
+  attendanceStats: () =>
+    request<number>('/instructor/attendance-stats'),
+
+  instructorStudents: (courseId: string, classId: string) =>
+    request<StudentProfile[]>(`/instructor/students?course_id=${courseId}&class_id=${classId}`),
 };
 
 // Helper function to fetch and calculate dashboard data from backend

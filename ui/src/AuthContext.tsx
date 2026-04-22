@@ -7,7 +7,7 @@ import type { UserProfile } from './api';
 interface AuthCtx {
   user: UserProfile | null;
   token: string | null;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<{ access_token: string; refresh_token: string; role: string }>;
   logout: () => void;
 }
 
@@ -25,6 +25,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    api.setOnTokenUpdate((newToken) => {
+      if (newToken) {
+        setToken(newToken);
+      } else {
+        logout();
+      }
+    });
+  }, [logout]);
+
+  useEffect(() => {
     if (token) {
       api.profile().then(setUser).catch(() => logout());
     }
@@ -35,6 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('access_token', tokens.access_token);
     localStorage.setItem('refresh_token', tokens.refresh_token);
     setToken(tokens.access_token);
+    return tokens;
   };
 
   return <Ctx.Provider value={{ user, token, login, logout }}>{children}</Ctx.Provider>;

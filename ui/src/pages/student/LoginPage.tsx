@@ -1,118 +1,144 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-
-interface LoginResponse {
-  access_token: string;
-  refresh_token: string;
-}
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+import { useAuth } from '../../AuthContext';
+import {
+  GraduationCap,
+  Lock,
+  ArrowLeft,
+  Loader2,
+  AlertCircle,
+  UserCircle,
+  Eye,
+  EyeOff
+} from 'lucide-react';
 
 const LoginPage: React.FC = () => {
-  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { login, logout } = useAuth();
+  const navigate = useNavigate();
 
-  const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const onSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
     setError(null);
-    setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ username, password }),
-      });
-
-      if (!response.ok) {
-        let errorMessage = 'Login failed. Please try again.';
-        
-        if (response.status === 401) {
-          errorMessage = 'Invalid username or password. Please check your credentials.';
-        } else if (response.status === 405) {
-          errorMessage = 'Invalid request. Please refresh the page and try again.';
-        } else if (response.status === 500) {
-          errorMessage = 'Server error. Please try again later.';
-        } else {
-          const errorBody = await response.json().catch(() => ({}));
-          errorMessage = errorBody.message || errorMessage;
-        }
-        
-        throw new Error(errorMessage);
+      const result = await login(username, password);
+      if (result.role !== 'student' && result.role !== 'admin') {
+        logout();
+        throw new Error('Access denied: Student account required.');
       }
-
-      const data = (await response.json()) as LoginResponse;
-      localStorage.setItem('auth_token', data.access_token);
-      localStorage.setItem('refresh_token', data.refresh_token);
       navigate('/student/home', { replace: true });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to login');
+    } catch (err: any) {
+      setError(err.message || 'Login failed. Please check your credentials.');
     } finally {
-      setIsSubmitting(false);
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4 py-8">
-      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-[var(--aau-border)] bg-white shadow-[var(--aau-shadow-strong)]">
-        <div className="bg-[var(--aau-primary)] px-7 py-6 text-white">
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-white/75">Addis Ababa University</p>
-          <h1 className="mt-1 text-2xl font-bold">CNCS Smart Attendance</h1>
-          <p className="mt-1 text-sm text-white/80">School of Information Science Student Portal</p>
-        </div>
+    <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50 relative overflow-hidden">
+      {/* Abstract Background */}
+      <div className="absolute top-0 left-0 w-full h-full -z-10 overflow-hidden pointer-events-none opacity-40">
+        <div className="absolute -top-24 -left-24 w-96 h-96 bg-primary/20 rounded-full blur-[100px]"></div>
+        <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-blue-200 rounded-full blur-[100px]"></div>
+      </div>
 
-        <div className="p-6 md:p-8">
-          <h2 className="text-xl font-semibold text-[var(--aau-text)]">Sign In</h2>
-          <p className="mt-1 text-sm text-[var(--aau-muted)]">Use your account from the data-source service.</p>
+      <div className="w-full max-w-md animate-fade-in-up">
+        {/* Back Button */}
+        <button
+          onClick={() => navigate('/')}
+          className="group flex items-center text-slate-500 hover:text-primary transition-colors mb-8"
+        >
+          <ArrowLeft size={18} className="mr-2 group-hover:-translate-x-1 transition-transform" />
+          Back to Landing Page
+        </button>
 
-          <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-            <div>
-              <label htmlFor="username" className="mb-1 block text-sm font-medium text-[var(--aau-text)]">
-                Username
-              </label>
-              <input
-                id="username"
-                type="text"
-                autoComplete="username"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                className="w-full rounded-xl border border-[var(--aau-border)] bg-white px-3 py-2.5 text-[var(--aau-text)] placeholder:text-gray-400 focus:border-[var(--aau-accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(0,168,232,0.25)]"
-                placeholder="ava.martin"
-                required
-              />
+        <div className="glass p-8 md:p-10 rounded-3xl shadow-xl border border-white/50 bg-white/80">
+          <div className="flex flex-col items-center mb-10 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mb-6 shadow-sm">
+              <GraduationCap size={32} />
+            </div>
+            <h1 className="text-3xl font-bold text-slate-900 mb-2 tracking-tight">Student Portal</h1>
+            <p className="text-slate-500">Sign in to access your dashboard and attendance.</p>
+          </div>
+
+          <form onSubmit={onSubmit} className="space-y-6">
+            {error && (
+              <div className="p-4 rounded-xl bg-red-50 border border-red-100 flex items-start text-red-600 text-sm animate-fade-in">
+                <AlertCircle size={18} className="mr-2 shrink-0 mt-0.5" />
+                {error}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-slate-700 ml-1">Username</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                  <UserCircle size={18} />
+                </div>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all placeholder:text-slate-400"
+                  placeholder="Enter your username"
+                  required
+                />
+              </div>
             </div>
 
-            <div>
-              <label htmlFor="password" className="mb-1 block text-sm font-medium text-[var(--aau-text)]">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                className="w-full rounded-xl border border-[var(--aau-border)] bg-white px-3 py-2.5 text-[var(--aau-text)] placeholder:text-gray-400 focus:border-[var(--aau-accent)] focus:outline-none focus:ring-2 focus:ring-[rgba(0,168,232,0.25)]"
-                placeholder="Enter your password"
-                required
-              />
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-slate-700 ml-1">Password</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                  <Lock size={18} />
+                </div>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-11 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all placeholder:text-slate-400"
+                  placeholder="••••••••"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-primary transition-colors"
+                >
+                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
-            {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+            <div className="flex items-center justify-between text-sm">
+              <label className="flex items-center text-slate-600 cursor-pointer">
+                <input type="checkbox" className="mr-2 rounded border-slate-300 text-primary focus:ring-primary" />
+                Remember me
+              </label>
+            </div>
 
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-70"
+              disabled={isLoading}
+              className="w-full btn-premium-primary py-3.5 flex items-center justify-center space-x-2"
             >
-              {isSubmitting ? 'Signing in...' : 'Sign In'}
+              {isLoading ? (
+                <>
+                  <Loader2 className="animate-spin" size={20} />
+                  <span>Signing in...</span>
+                </>
+              ) : (
+                <span>Sign In to Dashboard</span>
+              )}
             </button>
           </form>
+
         </div>
       </div>
     </div>

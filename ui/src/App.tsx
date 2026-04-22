@@ -16,16 +16,23 @@ import AdminStaffManagement from './pages/admin/StaffManagement';
 import AdminClassSchedule from './pages/admin/ClassSchedule';
 import AdminSettings from './pages/admin/Settings';
 
+// Instructor imports
+import InstructorLayout from './components/instructor/Layout';
+import InstructorLogin from './pages/instructor/LoginPage';
+import InstructorDashboard from './pages/instructor/Dashboard';
+import InstructorCourses from './pages/instructor/CoursesPage';
+import InstructorAttendance from './pages/instructor/AttendancePage';
+import InstructorSettings from './pages/instructor/SettingsPage';
+import InstructorPermissions from './pages/instructor/PermissionsPage';
+
 // Student imports
-import StudentDashboard from './pages/student/StudentDashboard';
+import StudentLayout from './components/student/Layout';
 import StudentLogin from './pages/student/LoginPage';
 import StudentHomePage from './pages/student/HomePage';
-import StudentSchedulePage from './pages/student/SchedulePage';
 import StudentAttendanceHistoryPage from './pages/student/AttendanceHistoryPage';
 import StudentCourseDetailPage from './pages/student/CourseDetailPage';
 import StudentPermissionsPage from './pages/student/PermissionsPage';
 import StudentNotificationsPage from './pages/student/NotificationsPage';
-import StudentProfilePage from './pages/student/ProfilePage';
 
 export default function App() {
   return (
@@ -51,17 +58,28 @@ export default function App() {
             <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
           </Route>
 
+          {/* Instructor Routes */}
+          <Route path="/instructor">
+            <Route path="login" element={<InstructorLogin />} />
+            <Route element={<InstructorLayout />}>
+              <Route path="dashboard" element={<InstructorDashboard />} />
+              <Route path="courses" element={<InstructorCourses />} />
+              <Route path="attendance" element={<InstructorAttendance />} />
+              <Route path="settings" element={<InstructorSettings />} />
+              <Route path="permissions" element={<InstructorPermissions />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/instructor/dashboard" replace />} />
+          </Route>
+
           {/* Student Routes */}
           <Route path="/student">
             <Route path="login" element={<StudentLogin />} />
-            <Route element={<StudentDashboard />}>
+            <Route element={<StudentLayout />}>
               <Route path="home" element={<StudentHomePage />} />
-              <Route path="schedule" element={<StudentSchedulePage />} />
               <Route path="history" element={<StudentAttendanceHistoryPage />} />
               <Route path="course/:courseId" element={<StudentCourseDetailPage />} />
               <Route path="permissions" element={<StudentPermissionsPage />} />
               <Route path="notifications" element={<StudentNotificationsPage />} />
-              <Route path="profile" element={<StudentProfilePage />} />
             </Route>
             <Route path="*" element={<Navigate to="/student/home" replace />} />
           </Route>
