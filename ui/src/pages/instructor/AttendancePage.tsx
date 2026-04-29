@@ -10,8 +10,7 @@ import {
     AlertCircle,
     History,
     CalendarDays,
-    BookOpen,
-    FileText
+    BookOpen
 } from 'lucide-react';
 import { api, type PermissionWithStudent } from '../../api';
 import { useAuth } from '../../AuthContext';
@@ -38,7 +37,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Input } from "@/components/ui/input"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 interface Session {
     id: string;
@@ -82,7 +80,6 @@ export default function AttendancePage() {
     const [records, setRecords] = useState<AttendanceRecord[]>([]);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
-    const [allPermissions, setAllPermissions] = useState<PermissionWithStudent[]>([]);
 
     // New Session Form State
     const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -92,7 +89,6 @@ export default function AttendancePage() {
     const [sessionDate, setSessionDate] = useState<Date | undefined>(new Date());
     const [showNewForm, setShowNewForm] = useState(false);
     const [viewingPermission, setViewingPermission] = useState<PermissionWithStudent | null>(null);
-    const [activeTab, setActiveTab] = useState("sessions");
 
     useEffect(() => {
         fetchInitialData();
@@ -100,17 +96,15 @@ export default function AttendancePage() {
 
     const fetchInitialData = async () => {
         try {
-            const [sessionsData, assignmentsData, permissionsData] = await Promise.all([
+            const [sessionsData, assignmentsData] = await Promise.all([
                 api.request<Session[]>('/sessions/instructor'),
                 api.request<Assignment[]>('/instructor/assignments'),
-                api.allPermissions().catch(() => [] as PermissionWithStudent[])
             ]);
 
             setSessions(sessionsData.sort((a: Session, b: Session) =>
                 new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
             ));
             setAssignments(assignmentsData);
-            setAllPermissions(permissionsData);
 
             // Extract courses and classes from assignments
             const uniqueCourseIds = Array.from(new Set(assignmentsData.map((a: Assignment) => a.course_id)));
@@ -208,8 +202,7 @@ export default function AttendancePage() {
         try {
             await api.updatePermission(id, status);
             // Refresh permissions
-            const updatedAll = await api.allPermissions();
-            setAllPermissions(updatedAll);
+            // (Removed permission refresh from here as the tab is gone)
             if (viewingPermission?.id === id) {
                 setViewingPermission(prev => prev ? ({ ...prev, status } as PermissionWithStudent) : null);
             }
@@ -245,163 +238,72 @@ export default function AttendancePage() {
 
             {/* Selection/View Layer */}
             {!selectedSession ? (
-                <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+                <div className="space-y-6">
                     <div className="flex items-center justify-between">
-                        <TabsList className="bg-slate-100 p-1.5 rounded-2xl h-14 border border-slate-200">
-                            <TabsTrigger
-                                value="sessions"
-                                className="rounded-xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-primary data-[state=active]:shadow-lg font-bold transition-all"
-                            >
-                                <History size={18} className="mr-2" />
-                                Sessions
-                            </TabsTrigger>
-                            <TabsTrigger
-                                value="permissions"
-                                className="rounded-xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-primary data-[state=active]:shadow-lg font-bold transition-all"
-                            >
-                                <AlertCircle size={18} className="mr-2" />
-                                Permissions
-                                {allPermissions.filter(p => p.status === 'pending').length > 0 && (
-                                    <Badge className="ml-2 bg-rose-500 text-[10px] w-5 h-5 flex items-center justify-center p-0 rounded-full">
-                                        {allPermissions.filter(p => p.status === 'pending').length}
-                                    </Badge>
-                                )}
-                            </TabsTrigger>
-                        </TabsList>
-
                         <div className="px-3 py-1 bg-slate-100 rounded-full text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                            {activeTab === 'sessions' ? `${sessions.length} total sessions` : `${allPermissions.length} requests`}
+                            {sessions.length} total sessions
                         </div>
                     </div>
 
-                    <TabsContent value="sessions" className="space-y-6 outline-none">
-                        {sessions.length === 0 ? (
-                            <div className="bg-white border border-slate-200 rounded-[40px] p-24 text-center shadow-sm">
-                                <div className="w-24 h-24 bg-slate-50 rounded-[32px] flex items-center justify-center mx-auto mb-8 animate-pulse">
-                                    <History className="text-slate-300" size={48} />
-                                </div>
-                                <h3 className="text-2xl font-bold text-slate-900 mb-3">No sessions yet</h3>
-                                <p className="text-slate-500 max-w-sm mx-auto leading-relaxed">Start your first attendance session to begin tracking student presence in real-time.</p>
+                    {sessions.length === 0 ? (
+                        <div className="bg-white border border-slate-200 rounded-[40px] p-24 text-center shadow-sm">
+                            <div className="w-24 h-24 bg-slate-50 rounded-[32px] flex items-center justify-center mx-auto mb-8 animate-pulse">
+                                <History className="text-slate-300" size={48} />
                             </div>
-                        ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                {sessions.map((session) => {
-                                    const course = courses.find(c => c.id === session.course_id);
-                                    const classDetail = classes.find(c => c.id === session.class_id);
+                            <h3 className="text-2xl font-bold text-slate-900 mb-3">No sessions yet</h3>
+                            <p className="text-slate-500 max-w-sm mx-auto leading-relaxed">Start your first attendance session to begin tracking student presence in real-time.</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {sessions.map((session) => {
+                                const course = courses.find(c => c.id === session.course_id);
+                                const classDetail = classes.find(c => c.id === session.class_id);
 
-                                    return (
-                                        <Card
-                                            key={session.id}
-                                            onClick={() => handleSelectSession(session)}
-                                            className="group cursor-pointer border-slate-100 hover:border-primary/30 hover:shadow-2xl hover:shadow-slate-200/50 transition-all duration-500 rounded-[32px] overflow-hidden"
-                                        >
-                                            <CardHeader className="pb-4">
-                                                <div className="flex items-start justify-between">
-                                                    <div className={`p-3 rounded-2xl transition-colors ${session.status === 'ongoing' ? 'bg-emerald-50 text-emerald-600' :
-                                                        session.status === 'completed' ? 'bg-slate-50 text-slate-600' : 'bg-primary/5 text-primary'
-                                                        }`}>
-                                                        <Users size={20} />
-                                                    </div>
-                                                    <Badge variant="secondary" className={`text-[10px] uppercase tracking-widest ${session.status === 'ongoing' ? 'bg-emerald-100/50 text-emerald-700' :
-                                                        session.status === 'completed' ? 'bg-slate-100/50 text-slate-600' : 'bg-primary/10 text-primary'
-                                                        }`}>
-                                                        {session.status}
-                                                    </Badge>
+                                return (
+                                    <Card
+                                        key={session.id}
+                                        onClick={() => handleSelectSession(session)}
+                                        className="group cursor-pointer border-slate-100 hover:border-primary/30 hover:shadow-2xl hover:shadow-slate-200/50 transition-all duration-500 rounded-[32px] overflow-hidden"
+                                    >
+                                        <CardHeader className="pb-4">
+                                            <div className="flex items-start justify-between">
+                                                <div className={`p-3 rounded-2xl transition-colors ${session.status === 'ongoing' ? 'bg-emerald-50 text-emerald-600' :
+                                                    session.status === 'completed' ? 'bg-slate-50 text-slate-600' : 'bg-primary/5 text-primary'
+                                                    }`}>
+                                                    <Users size={20} />
                                                 </div>
-                                                <CardTitle className="text-xl font-bold mt-4 line-clamp-1 group-hover:text-primary transition-colors">
-                                                    {course?.name || 'Loading Course...'}
-                                                </CardTitle>
-                                                <CardDescription className="font-semibold text-slate-400">
-                                                    Class: {classDetail ? `Year ${classDetail.year} - Section ${classDetail.section}` : '...'}
-                                                </CardDescription>
-                                            </CardHeader>
-                                            <CardContent>
-                                                <Separator className="mb-4 bg-slate-50" />
-                                                <div className="flex items-center gap-4 text-xs font-bold text-slate-400">
-                                                    <div className="flex items-center gap-1.5">
-                                                        <CalendarDays size={14} />
-                                                        {new Date(session.created_at || Date.now()).toLocaleDateString()}
-                                                    </div>
-                                                    <div className="flex items-center gap-1.5">
-                                                        <Clock size={14} />
-                                                        {new Date(session.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                    </div>
+                                                <Badge variant="secondary" className={`text-[10px] uppercase tracking-widest ${session.status === 'ongoing' ? 'bg-emerald-100/50 text-emerald-700' :
+                                                    session.status === 'completed' ? 'bg-slate-100/50 text-slate-600' : 'bg-primary/10 text-primary'
+                                                    }`}>
+                                                    {session.status}
+                                                </Badge>
+                                            </div>
+                                            <CardTitle className="text-xl font-bold mt-4 line-clamp-1 group-hover:text-primary transition-colors">
+                                                {course?.name || 'Loading Course...'}
+                                            </CardTitle>
+                                            <CardDescription className="font-semibold text-slate-400">
+                                                Class: {classDetail ? `Year ${classDetail.year} - Section ${classDetail.section}` : '...'}
+                                            </CardDescription>
+                                        </CardHeader>
+                                        <CardContent>
+                                            <Separator className="mb-4 bg-slate-50" />
+                                            <div className="flex items-center gap-4 text-xs font-bold text-slate-400">
+                                                <div className="flex items-center gap-1.5">
+                                                    <CalendarDays size={14} />
+                                                    {new Date(session.created_at || Date.now()).toLocaleDateString()}
                                                 </div>
-                                            </CardContent>
-                                        </Card>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </TabsContent>
-
-                    <TabsContent value="permissions" className="outline-none">
-                        {allPermissions.length === 0 ? (
-                            <div className="bg-white border border-slate-200 rounded-[40px] p-24 text-center shadow-sm">
-                                <div className="w-24 h-24 bg-slate-50 rounded-[32px] flex items-center justify-center mx-auto mb-8">
-                                    <AlertCircle className="text-slate-300" size={48} />
-                                </div>
-                                <h3 className="text-2xl font-bold text-slate-900 mb-3">All clear!</h3>
-                                <p className="text-slate-500 max-w-sm mx-auto leading-relaxed">No permission requests have been submitted yet.</p>
-                            </div>
-                        ) : (
-                            <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="bg-slate-50/50 border-b border-slate-100">
-                                            <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Student</th>
-                                            <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Course & Session</th>
-                                            <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
-                                            <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-50">
-                                        {allPermissions.map((perm) => {
-                                            const session = sessions.find(s => s.id === perm.session_id);
-                                            const course = courses.find(c => c.id === session?.course_id);
-
-                                            return (
-                                                <tr key={perm.id} className="group hover:bg-slate-50/50 transition-colors">
-                                                    <td className="px-8 py-5">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="w-10 h-10 bg-primary/5 text-primary rounded-xl flex items-center justify-center font-bold text-sm">
-                                                                {perm.student_name.charAt(0)}
-                                                            </div>
-                                                            <span className="text-sm font-bold text-slate-900">{perm.student_name}</span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-8 py-5">
-                                                        <div>
-                                                            <p className="text-sm font-bold text-slate-900">{course?.name || 'Loading...'}</p>
-                                                            <p className="text-[10px] text-slate-400 font-medium">Session: {session?.id.slice(0, 8) || '...'}</p>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-8 py-5">
-                                                        <Badge className={`px-2.5 py-1 rounded-md uppercase text-[9px] font-black tracking-widest ${perm.status === 'accepted' ? 'bg-emerald-50 text-emerald-600' :
-                                                            perm.status === 'rejected' ? 'bg-rose-50 text-rose-600' :
-                                                                'bg-amber-50 text-amber-600'
-                                                            }`}>
-                                                            {perm.status}
-                                                        </Badge>
-                                                    </td>
-                                                    <td className="px-8 py-5 text-right">
-                                                        <Button
-                                                            variant="ghost"
-                                                            className="h-10 px-4 rounded-xl text-xs font-bold text-primary hover:bg-primary/5"
-                                                            onClick={() => setViewingPermission(perm)}
-                                                        >
-                                                            View Details
-                                                        </Button>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </TabsContent>
-                </Tabs>
+                                                <div className="flex items-center gap-1.5">
+                                                    <Clock size={14} />
+                                                    {new Date(session.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                </div>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
             ) : (
                 <div className="space-y-6 animate-in slide-in-from-right-4 duration-500">
                     <div className="flex items-center justify-between">
@@ -518,18 +420,6 @@ export default function AttendancePage() {
                                                             <XCircle size={20} />
                                                         </button>
 
-                                                        {allPermissions.find(p => p.student_id === record.student_id && p.session_id === record.session_id) && (
-                                                            <button
-                                                                onClick={() => {
-                                                                    const perm = allPermissions.find(p => p.student_id === record.student_id && p.session_id === record.session_id);
-                                                                    if (perm) setViewingPermission(perm);
-                                                                }}
-                                                                className="p-3 rounded-xl bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 transition-all hover:scale-110"
-                                                                title="View Details"
-                                                            >
-                                                                <FileText size={20} />
-                                                            </button>
-                                                        )}
                                                     </div>
                                                 </td>
                                             </tr>

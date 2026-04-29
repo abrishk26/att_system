@@ -104,11 +104,22 @@ export interface CoursePerformance {
   sessions: number;
 }
 
-export interface ActivityItem {
-  type: 'success' | 'warning' | 'info';
-  message: string;
-  detail: string;
-  time: string;
+
+export interface InstructorDashboardMetrics {
+    stats: {
+        active_courses: number;
+        total_sessions: number;
+        avg_attendance: number;
+        total_students: number;
+    };
+    trends: Array<{ date: string; rate: number }>;
+    course_performance: Array<{ course_id: string; attendance_rate: number }>;
+}
+
+export interface StudentDashboardMetrics {
+    overall_attendance: number;
+    courses_performance: Array<{ course_name: string; percentage: number }>;
+    attendance_trend: Array<{ date: string; status: string }>;
 }
 
 let onTokenUpdate: ((token: string | null) => void) | null = null;
@@ -265,6 +276,10 @@ export const api = {
 
   instructorStudents: (courseId: string, classId: string) =>
     request<StudentProfile[]>(`/instructor/students?course_id=${courseId}&class_id=${classId}`),
+
+  instructorDashboardMetrics: () => request<InstructorDashboardMetrics>('/instructor/dashboard-metrics'),
+  
+  studentDashboardMetrics: () => request<StudentDashboardMetrics>('/student/dashboard-metrics'),
 };
 
 // Helper function to fetch and calculate dashboard data from backend
@@ -365,21 +380,5 @@ export async function fetchDashboardData(_user: UserProfile) {
   
   const performance = await Promise.all(performancePromises);
   
-  // Activity
-  const activity: ActivityItem[] = [
-    {
-      type: 'success',
-      message: 'Session completed',
-      detail: `${completedSessions.length} sessions completed`,
-      time: 'Just now',
-    },
-    {
-      type: 'info',
-      message: 'Active sessions',
-      detail: `${activeSessions.length} sessions in progress`,
-      time: '5 min ago',
-    },
-  ];
-  
-  return { stats, trends, distribution, performance, activity };
+  return { stats, trends, distribution, performance };
 }

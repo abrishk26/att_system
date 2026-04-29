@@ -59,14 +59,14 @@ This system provides a complete solution for managing student attendance with:
 
 ## ✨ Features
 
-### Admin/Instructor Dashboard
-- **Session Management**: Create, start, and complete class sessions
-- **Attendance Tracking**: Mark students present/absent/late with NFC support
-- **Analytics Dashboard**: Real-time attendance statistics and trends
-- **Permission Management**: Review and approve/reject student permission requests
-- **Reporting**: Generate detailed attendance reports
-- **Staff Management**: Manage instructors and assignments
-- **Class Scheduling**: View and manage class schedules
+### Educator / Instructor Portal
+- **Dashboard Overview**: Quick glance at active sessions, course counts, and attendance averages
+- **Course Management**: Detailed view of assigned courses with student counts and credit information
+- **Real-time Attendance**: Start new class sessions and mark attendance manually or via NFC
+- **Class Roster Tracking**: View student lists for each session with live present/absent counts
+- **Interactive Schedule**: Weekly teaching schedule with grid and list views for room assignments
+- **Permission Approval**: Review and approve/reject student document-based absence requests
+- **Profile & Preferences**: Manage personal instructor profiles and notification settings
 
 ### Student Dashboard
 - **Attendance History**: View personal attendance records by course

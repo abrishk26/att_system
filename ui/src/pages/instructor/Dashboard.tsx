@@ -1,33 +1,59 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api';
-import type { Assignment, Session } from '../../api';
-import { useAuth } from '../../AuthContext';
+import type { Assignment, InstructorDashboardMetrics } from '../../api';
 import {
     Users,
     BookOpen,
     Activity,
     Calendar,
-    Plus,
     ArrowRight,
-    MoreVertical,
-    Clock
+    TrendingUp,
+    BarChart3
 } from 'lucide-react';
+import {
+    Chart as ChartJS,
+    CategoryScale,
+    LinearScale,
+    BarElement,
+    PointElement,
+    LineElement,
+    Title,
+    Tooltip,
+    Legend,
+    ArcElement,
+    Filler
+} from 'chart.js';
+import { Bar, Line, Doughnut } from 'react-chartjs-2';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+
+ChartJS.register(
+    CategoryScale,
+    LinearScale,
+    BarElement,
+    PointElement,
+    LineElement,
+    Title,
+    Tooltip,
+    Legend,
+    ArcElement,
+    Filler
+);
 
 export default function InstructorDashboard() {
-    const { user } = useAuth();
     const [assignments, setAssignments] = useState<Assignment[]>([]);
-    const [sessions, setSessions] = useState<Session[]>([]);
+    const [metrics, setMetrics] = useState<InstructorDashboardMetrics | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
         async function loadData() {
             try {
-                const [assigns, sess] = await Promise.all([
+                const [assigns, met] = await Promise.all([
                     api.instructorAssignments(),
-                    api.instructorSessions()
+                    api.instructorDashboardMetrics()
                 ]);
                 setAssignments(assigns);
-                setSessions(sess.slice(0, 5)); // Keep only recent sessions
+                setMetrics(met);
             } catch (err) {
                 console.error('Failed to load dashboard data', err);
             } finally {
@@ -37,142 +63,270 @@ export default function InstructorDashboard() {
         loadData();
     }, []);
 
-    const stats = [
-        { title: 'Active Courses', value: assignments.length, icon: BookOpen, color: 'bg-indigo-50 text-indigo-600' },
-        { title: 'Total Sessions', value: sessions.length, icon: Calendar, color: 'bg-emerald-50 text-emerald-600' },
-        { title: 'Avg. Attendance', value: '84%', icon: Activity, color: 'bg-amber-50 text-amber-600' },
-        { title: 'Students', value: '124', icon: Users, color: 'bg-rose-50 text-rose-600' },
-    ];
-
     if (isLoading) {
         return (
-            <div className="flex items-center justify-center h-full">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+            <div className="p-8 space-y-8 animate-pulse">
+                <div className="h-20 bg-slate-100 rounded-2xl w-1/4"></div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    {[1, 2, 3, 4].map(i => <div key={i} className="h-28 bg-slate-100 rounded-2xl"></div>)}
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-2 h-96 bg-slate-100 rounded-3xl"></div>
+                    <div className="h-96 bg-slate-100 rounded-3xl"></div>
+                </div>
             </div>
         );
     }
 
+    const performanceData = {
+        labels: metrics?.course_performance.map(cp => cp.course_id) || [],
+        datasets: [
+            {
+                label: 'Attendance Rate %',
+                data: metrics?.course_performance.map(cp => cp.attendance_rate) || [],
+                backgroundColor: 'rgba(99, 102, 241, 0.8)',
+                borderRadius: 8,
+            },
+        ],
+    };
+
+    const trendData = {
+        labels: metrics?.trends.map(t => t.date) || [],
+        datasets: [
+            {
+                label: 'Department Avg',
+                data: metrics?.trends.map(t => t.rate) || [],
+                borderColor: '#6366f1',
+                backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                fill: true,
+                tension: 0.4,
+            },
+        ],
+    };
+
+    const doughnutData = {
+        labels: ['Excellent', 'Standard', 'At Risk'],
+        datasets: [
+            {
+                data: [
+                    metrics?.course_performance.filter(c => c.attendance_rate >= 85).length || 0,
+                    metrics?.course_performance.filter(c => c.attendance_rate < 85 && c.attendance_rate >= 70).length || 0,
+                    metrics?.course_performance.filter(c => c.attendance_rate < 70).length || 0,
+                ],
+                backgroundColor: ['#10b981', '#6366f1', '#f43f5e'],
+                borderWidth: 0,
+                cutout: '75%',
+            },
+        ],
+    };
+
     return (
-        <div className="space-y-10">
-            {/* Welcome Header */}
-            <div>
-                <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight mb-2">
-                    Hello, Prof. {user?.first_name}! 👋
-                </h1>
-                <p className="text-slate-500">Here's what's happening with your classes today.</p>
+        <div className="p-4 md:p-8 space-y-10 max-w-[1600px] mx-auto">
+            {/* Header */}
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-slate-100 pb-10">
+                <div className="space-y-1">
+                    <h1 className="text-4xl font-black text-slate-900 tracking-tight flex items-center gap-3">
+                        <BarChart3 className="text-indigo-600" size={32} />
+                        Instructor Console
+                    </h1>
+                </div>
             </div>
 
-            {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {stats.map((stat, i) => (
-                    <div key={i} className="glass p-6 rounded-3xl transition-all duration-300 card-hover bg-white/50 border-white">
-                        <div className={`w-12 h-12 rounded-2xl ${stat.color} flex items-center justify-center mb-4 shadow-sm`}>
-                            <stat.icon size={24} />
+            {/* Quick Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+                <MetricCard
+                    title="Active Courses"
+                    value={metrics?.stats.active_courses || 0}
+                    sub="Assigned modules"
+                    icon={<BookOpen size={20} />}
+                    color="indigo"
+                />
+                <MetricCard
+                    title="Total Sessions"
+                    value={metrics?.stats.total_sessions || 0}
+                    sub="Academic year"
+                    icon={<Calendar size={20} />}
+                    color="emerald"
+                />
+                <MetricCard
+                    title="Avg. Attendance"
+                    value={`${Math.round(metrics?.stats.avg_attendance || 0)}%`}
+                    sub="Global average"
+                    icon={<Activity size={20} />}
+                    color="amber"
+                />
+                <MetricCard
+                    title="Total Students"
+                    value={metrics?.stats.total_students || 0}
+                    sub="Unique learners"
+                    icon={<Users size={20} />}
+                    color="rose"
+                />
+            </div>
+
+            {/* Data Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+                {/* Visual Analytics */}
+                <div className="lg:col-span-8 space-y-8">
+                    <Tabs defaultValue="courses" className="w-full">
+                        <div className="flex items-center justify-between mb-8">
+                            <h2 className="text-2xl font-black text-slate-900">Analytics Suite</h2>
+                            <TabsList className="bg-slate-100/80 p-1">
+                                <TabsTrigger value="courses">Course Comparison</TabsTrigger>
+                                <TabsTrigger value="trends">Timeline Trend</TabsTrigger>
+                            </TabsList>
                         </div>
-                        <p className="text-sm font-medium text-slate-500 mb-1">{stat.title}</p>
-                        <h3 className="text-2xl font-bold text-slate-900">{stat.value}</h3>
-                    </div>
-                ))}
-            </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Recent Sessions */}
-                <div className="lg:col-span-2 space-y-6">
-                    <div className="flex items-center justify-between">
-                        <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                            <Clock className="text-primary" size={20} />
-                            Recent Sessions
+                        <TabsContent value="courses">
+                            <Card className="border-slate-50 shadow-md">
+                                <CardHeader>
+                                    <CardTitle>Attendance Distribution</CardTitle>
+                                    <CardDescription>Cross-course performance benchmarking.</CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="h-[400px] w-full">
+                                        <Bar
+                                            data={performanceData}
+                                            options={{
+                                                responsive: true,
+                                                maintainAspectRatio: false,
+                                                plugins: { legend: { display: false } },
+                                                scales: {
+                                                    y: { beginAtZero: true, max: 100, grid: { color: '#f8fafc' } },
+                                                    x: { grid: { display: false } }
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </TabsContent>
+
+                        <TabsContent value="trends">
+                            <Card className="border-slate-50 shadow-md">
+                                <CardHeader>
+                                    <CardTitle>Temporal Analytics</CardTitle>
+                                    <CardDescription>Last 7 sessions aggregate attendance movement.</CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="h-[400px] w-full">
+                                        <Line
+                                            data={trendData}
+                                            options={{
+                                                responsive: true,
+                                                maintainAspectRatio: false,
+                                                plugins: { legend: { display: false } },
+                                                scales: {
+                                                    y: { display: false },
+                                                    x: { grid: { display: false } }
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </TabsContent>
+                    </Tabs>
+
+                    {/* Quick Course Access */}
+                    <div className="space-y-6">
+                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 px-2">
+                            <BookOpen className="text-purple-600" size={24} />
+                            My Courses
                         </h2>
-                        <button className="text-sm font-semibold text-primary hover:underline flex items-center gap-1">
-                            View All <ArrowRight size={14} />
-                        </button>
-                    </div>
-
-                    <div className="space-y-4">
-                        {sessions.length > 0 ? sessions.map((session) => (
-                            <div key={session.id} className="glass p-5 rounded-2xl bg-white border-slate-100 flex items-center justify-between group hover:shadow-md transition-all">
-                                <div className="flex items-center gap-4">
-                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${session.status === 'active' ? 'bg-emerald-50 text-emerald-600 animate-pulse' : 'bg-slate-50 text-slate-400'
-                                        }`}>
-                                        <Activity size={20} />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {assignments.map((assign) => (
+                                <Card key={assign.id} className="p-6 rounded-[2rem] border-2 border-slate-50 bg-white hover:border-purple-200 transition-all cursor-pointer group shadow-sm hover:shadow-md">
+                                    <div className="flex items-start justify-between mb-4">
+                                        <div>
+                                            <h4 className="text-lg font-black text-slate-900 group-hover:text-purple-600 transition-colors uppercase tracking-tight">{assign.course_id.toString().slice(0, 8)}</h4>
+                                            <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Section {assign.class_id.toString().slice(0, 8)}</p>
+                                        </div>
+                                        <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400 opacity-0 group-hover:opacity-100 transition-all">
+                                            <ArrowRight size={18} />
+                                        </div>
                                     </div>
-                                    <div>
-                                        <h4 className="font-bold text-slate-900">{session.course_id}</h4>
-                                        <p className="text-xs text-slate-500 flex items-center gap-1">
-                                            Class ID: {session.class_id} • Status: <span className="capitalize font-medium">{session.status}</span>
-                                        </p>
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex -space-x-3">
+                                            {[1, 2, 3].map(i => (
+                                                <div key={i} className="w-8 h-8 rounded-xl bg-slate-100 border-2 border-white text-[10px] flex items-center justify-center font-black text-slate-500 shadow-sm">
+                                                    {i}
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Linked</span>
                                     </div>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <button className="p-2 rounded-lg hover:bg-slate-50 text-slate-400 transition-colors">
-                                        <MoreVertical size={18} />
-                                    </button>
-                                </div>
-                            </div>
-                        )) : (
-                            <div className="text-center py-10 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-                                <p className="text-slate-400">No recent sessions found</p>
-                            </div>
-                        )}
+                                </Card>
+                            ))}
+                        </div>
                     </div>
                 </div>
 
-                {/* Quick Actions / Courses */}
-                <div className="space-y-6">
-                    <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                        <BookOpen className="text-primary" size={20} />
-                        My Courses
-                    </h2>
-                    <div className="space-y-3">
-                        {assignments.map((assign) => (
-                            <div key={assign.id} className="p-4 rounded-2xl border border-slate-100 bg-white hover:border-primary/30 transition-all cursor-pointer group">
-                                <div className="flex items-start justify-between">
-                                    <div>
-                                        <h4 className="font-bold text-slate-900 group-hover:text-primary transition-colors">{assign.course_id}</h4>
-                                        <p className="text-xs text-slate-500 mt-0.5">Section {assign.class_id}</p>
-                                    </div>
-                                    <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 opacity-0 group-hover:opacity-100 transition-all">
-                                        <ChevronRight size={16} />
-                                    </div>
-                                </div>
-                                <div className="mt-4 flex items-center gap-2">
-                                    <div className="flex -space-x-2">
-                                        {[1, 2, 3].map(i => (
-                                            <div key={i} className="w-6 h-6 rounded-full bg-slate-200 border-2 border-white text-[8px] flex items-center justify-center font-bold text-slate-600">
-                                                {i}
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <p className="text-[10px] text-slate-400 font-medium">+42 more students</p>
+                {/* Status Column */}
+                <div className="lg:col-span-4 space-y-8">
+                    <Card className="border-slate-50 shadow-lg">
+                        <CardHeader>
+                            <div className="flex items-center gap-2">
+                                <TrendingUp className="text-indigo-600" size={18} />
+                                <CardTitle className="text-lg">Department Health</CardTitle>
+                            </div>
+                        </CardHeader>
+                        <CardContent className="flex flex-col items-center">
+                            <div className="h-64 w-64 relative mb-8">
+                                <Doughnut data={doughnutData} options={{ plugins: { legend: { display: false } } }} />
+                                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                    <span className="text-5xl font-black text-slate-900">{Math.round(metrics?.stats.avg_attendance || 0)}%</span>
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Consistency</span>
                                 </div>
                             </div>
-                        ))}
-
-                        <button className="w-full mt-4 flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-slate-200 text-slate-400 hover:border-primary/50 hover:text-primary transition-all font-semibold">
-                            <Plus size={18} />
-                            <span>Start New Session</span>
-                        </button>
-                    </div>
+                            <div className="w-full space-y-3">
+                                <StatusRow color="bg-emerald-500" label="Optimum Attendance" count={metrics?.course_performance.filter(c => c.attendance_rate >= 85).length || 0} />
+                                <StatusRow color="bg-indigo-500" label="Standard Performance" count={metrics?.course_performance.filter(c => c.attendance_rate < 85 && c.attendance_rate >= 70).length || 0} />
+                                <StatusRow color="bg-rose-500" label="Needs Intervention" count={metrics?.course_performance.filter(c => c.attendance_rate < 70).length || 0} />
+                            </div>
+                        </CardContent>
+                    </Card>
                 </div>
+
             </div>
         </div>
     );
 }
 
-// Minimal icons for internal use
-function ChevronRight({ size = 16 }: { size?: number }) {
+function MetricCard({ title, value, sub, icon, color }: { title: string, value: string | number, sub: string, icon: React.ReactNode, color: string }) {
+    const colors = {
+        indigo: 'bg-indigo-50 text-indigo-600',
+        emerald: 'bg-emerald-50 text-emerald-600',
+        amber: 'bg-amber-50 text-amber-600',
+        rose: 'bg-rose-50 text-rose-600',
+    };
     return (
-        <svg
-            width={size}
-            height={size}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-        >
-            <path d="m9 18 6-6-6-6" />
-        </svg>
+        <Card className="border-slate-50 shadow-sm overflow-hidden group hover:border-indigo-100 transition-colors">
+            <CardContent className="p-6">
+                <div className="flex items-center gap-4">
+                    <div className={`w-12 h-12 rounded-2xl ${colors[color as keyof typeof colors]} flex items-center justify-center group-hover:scale-110 transition-transform`}>
+                        {icon}
+                    </div>
+                    <div>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</p>
+                        <h3 className="text-2xl font-black text-slate-900">{value}</h3>
+                        <p className="text-xs text-slate-400 font-medium">{sub}</p>
+                    </div>
+                </div>
+            </CardContent>
+        </Card>
+    );
+}
+
+function StatusRow({ color, label, count }: { color: string, label: string, count: number }) {
+    return (
+        <div className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition-colors cursor-default">
+            <div className="flex items-center gap-3">
+                <div className={`w-2.5 h-2.5 rounded-full ${color} shadow-sm shadow-black/10`}></div>
+                <span className="text-xs font-bold text-slate-600">{label}</span>
+            </div>
+            <span className="text-xs font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">{count}</span>
+        </div>
     );
 }

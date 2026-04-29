@@ -5,7 +5,6 @@ import Sidebar from './Sidebar';
 import {
   Menu,
   Search,
-  Bell,
   LogOut
 } from 'lucide-react';
 
@@ -50,11 +49,6 @@ export default function Layout() {
           </div>
 
           <div className="flex items-center gap-4">
-            <button className="relative p-2.5 rounded-xl text-slate-500 hover:bg-slate-50 hover:text-primary transition-all group">
-              <Bell size={20} />
-              <span className="absolute top-2.5 right-2.5 w-1.5 h-1.5 bg-red-500 rounded-full border-2 border-white"></span>
-            </button>
-
             <div className="h-8 w-px bg-slate-100 hidden sm:block mx-1"></div>
 
             <div className="flex items-center gap-3">

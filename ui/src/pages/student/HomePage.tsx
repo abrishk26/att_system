@@ -1,18 +1,48 @@
-import React from 'react';
-import { useOutletContext, Link } from 'react-router-dom';
-import { useAttendance } from '../../hooks/student/useAttendance';
-import { useNotifs } from '../../hooks/student/useNotifs';
-import { NotificationListItem } from '../../components/student/home/NotificationListItem';
+import React, { useEffect, useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
+import { api } from '../../api';
+import type { StudentDashboardMetrics } from '../../api';
 import {
-  ChevronRight,
-  Calendar,
-  Bell,
   TrendingUp,
   BookOpen,
-  Clock,
-  ArrowUpRight,
-  Target
+  Target,
+  Calendar,
+  Layers,
+  Award,
+  Zap
 } from 'lucide-react';
+import {
+  Chart as ChartJS,
+  RadialLinearScale,
+  PointElement,
+  LineElement,
+  Filler,
+  Tooltip,
+  Legend,
+  ArcElement,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title
+} from 'chart.js';
+import { Radar, Doughnut, Line } from 'react-chartjs-2';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../components/ui/card";
+import { Badge } from "../../components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+
+ChartJS.register(
+  RadialLinearScale,
+  PointElement,
+  LineElement,
+  Filler,
+  Tooltip,
+  Legend,
+  ArcElement,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title
+);
 
 interface StudentContext {
   studentId: string;
@@ -20,180 +50,274 @@ interface StudentContext {
 
 const HomePage: React.FC = () => {
   const { studentId } = useOutletContext<StudentContext>();
-  const { history, isLoading: attendanceLoading } = useAttendance(studentId);
-  const { notifications, isLoading: notifsLoading } = useNotifs(studentId);
+  const [metrics, setMetrics] = useState<StudentDashboardMetrics | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const overallAttendance = React.useMemo(() => {
-    if (!history || history.length === 0) return { attendancePercentage: 0, totalPresent: 0, totalSessions: 0 };
-    const totalSessions = history.reduce((acc, course) => acc + course.totalSessions, 0);
-    const totalPresent = history.reduce((acc, course) => acc + course.present, 0);
-    return {
-      attendancePercentage: totalSessions > 0 ? Math.round((totalPresent / totalSessions) * 100) : 0,
-      totalPresent,
-      totalSessions
+  useEffect(() => {
+    async function loadMetrics() {
+      try {
+        const data = await api.studentDashboardMetrics();
+        setMetrics(data);
+      } catch (err) {
+        console.error('Failed to load student metrics', err);
+      } finally {
+        setIsLoading(false);
+      }
     }
-  }, [history]);
-
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good Morning';
-    if (hour < 18) return 'Good Afternoon';
-    return 'Good Evening';
-  };
-
-  const isLoading = attendanceLoading || notifsLoading;
+    loadMetrics();
+  }, [studentId]);
 
   if (isLoading) {
     return (
-      <div className="space-y-8 animate-pulse">
-        <div className="h-48 bg-slate-200 rounded-3xl"></div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="h-32 bg-slate-200 rounded-2xl"></div>
-          <div className="h-32 bg-slate-200 rounded-2xl"></div>
+      <div className="p-8 space-y-8 animate-pulse">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map(i => <div key={i} className="h-24 bg-slate-100 rounded-xl"></div>)}
         </div>
-        <div className="h-64 bg-slate-200 rounded-2xl"></div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 h-96 bg-slate-100 rounded-2xl"></div>
+          <div className="h-96 bg-slate-100 rounded-2xl"></div>
+        </div>
       </div>
     );
   }
 
+  // Radar Chart Data
+  const radarData = {
+    labels: metrics?.courses_performance.map(cp => cp.course_name) || [],
+    datasets: [
+      {
+        label: 'Attendance Rate %',
+        data: metrics?.courses_performance.map(cp => cp.percentage) || [],
+        backgroundColor: 'rgba(99, 102, 241, 0.2)',
+        borderColor: '#6366f1',
+        borderWidth: 2,
+        pointBackgroundColor: '#6366f1',
+        pointBorderColor: '#fff',
+      },
+    ],
+  };
+
+  // Doughnut Chart Data
+  const doughnutData = {
+    labels: ['Present', 'Absent/Excused'],
+    datasets: [
+      {
+        data: [metrics?.overall_attendance || 0, 100 - (metrics?.overall_attendance || 0)],
+        backgroundColor: ['#6366f1', '#f1f5f9'],
+        borderWidth: 0,
+      },
+    ],
+  };
+
+  // Line Chart Data
+  const lineData = {
+    labels: metrics?.attendance_trend.map(t => t.date) || [],
+    datasets: [
+      {
+        fill: true,
+        label: 'Status (100 = Present)',
+        data: metrics?.attendance_trend.map(t => t.status === 'present' ? 100 : 0) || [],
+        borderColor: '#8b5cf6',
+        backgroundColor: 'rgba(139, 92, 246, 0.1)',
+        tension: 0.4,
+      },
+    ],
+  };
+
+  const statusBadge = (rate: number) => {
+    if (rate >= 85) return <Badge className="bg-emerald-500 hover:bg-emerald-600">Excellent Standing</Badge>;
+    if (rate >= 75) return <Badge className="bg-amber-500 hover:bg-amber-600">Good Standing</Badge>;
+    return <Badge variant="destructive">Warning</Badge>;
+  };
+
   return (
-    <div className="space-y-8 pb-10">
-      {/* Welcome Header */}
-      <div className="relative overflow-hidden rounded-[2rem] bg-primary p-8 md:p-12 text-white shadow-2xl shadow-primary/20">
-        <div className="relative z-10 max-w-2xl">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/20 backdrop-blur-md text-sm font-medium mb-6">
-            <Calendar size={16} />
-            {new Date().toLocaleDateString('en-US', {
-              weekday: 'long',
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric'
-            })}
-          </div>
-          <h1 className="text-3xl md:text-5xl font-black tracking-tight mb-4">
-            {getGreeting()}, Student!
+    <div className="p-4 md:p-8 space-y-8 max-w-[1600px] mx-auto">
+      {/* Command Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-slate-100 pb-8">
+        <div>
+          <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
+            <Layers className="text-indigo-600" size={32} />
+            Student Dashboard
           </h1>
-          <p className="text-white/80 text-lg md:text-xl leading-relaxed">
-            Ready to make today productive? Your attendance is looking solid at <span className="text-white font-bold">{overallAttendance.attendancePercentage}%</span>.
-          </p>
-        </div>
-
-        {/* Abstract Background Shapes */}
-        <div className="absolute top-0 right-0 -translate-y-1/4 translate-x-1/4 w-96 h-96 bg-white/10 rounded-full blur-3xl"></div>
-        <div className="absolute bottom-0 left-0 translate-y-1/2 -translate-x-1/2 w-64 h-64 bg-secondary/20 rounded-full blur-3xl"></div>
-      </div>
-
-      {/* Quick Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* Attendance Card */}
-        <div className="glass rounded-[2rem] p-8 card-hover relative group">
-          <div className="flex items-center justify-between mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
-              <TrendingUp size={24} />
-            </div>
-            <div className="px-3 py-1 rounded-full bg-success/10 text-success text-xs font-bold uppercase tracking-wider">
-              On Track
-            </div>
-          </div>
-          <div>
-            <p className="text-slate-500 font-medium mb-1">Overall Attendance</p>
-            <div className="flex items-baseline gap-2">
-              <h3 className="text-4xl font-black text-slate-900">{overallAttendance.attendancePercentage}%</h3>
-              <ArrowUpRight className="text-success" size={20} />
-            </div>
-            <div className="mt-6 h-3 bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-primary rounded-full transition-all duration-1000 ease-out shadow-lg shadow-primary/30"
-                style={{ width: `${overallAttendance.attendancePercentage}%` }}
-              ></div>
-            </div>
-          </div>
-        </div>
-
-        {/* Sessions Card */}
-        <div className="glass rounded-[2rem] p-8 card-hover relative group">
-          <div className="flex items-center justify-between mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-secondary/10 flex items-center justify-center text-secondary">
-              <BookOpen size={24} />
-            </div>
-          </div>
-          <div>
-            <p className="text-slate-500 font-medium mb-1">Sessions Attended</p>
-            <h3 className="text-4xl font-black text-slate-900">{overallAttendance.totalPresent}</h3>
-            <p className="text-slate-400 text-sm mt-2 font-medium">Out of {overallAttendance.totalSessions} total sessions</p>
-          </div>
-        </div>
-
-        {/* Next Goal Card */}
-        <div className="glass rounded-[2rem] p-8 card-hover relative group lg:col-span-1">
-          <div className="flex items-center justify-between mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-accent/10 flex items-center justify-center text-accent">
-              <Target size={24} />
-            </div>
-          </div>
-          <div>
-            <p className="text-slate-500 font-medium mb-1">Target Attendance</p>
-            <h3 className="text-4xl font-black text-slate-900">85%</h3>
-            <p className="text-slate-400 text-sm mt-2 font-medium">Keep it up to maintain eligibility!</p>
-          </div>
         </div>
       </div>
 
-      {/* Notifications Section */}
-      <div className="glass rounded-[2rem] overflow-hidden">
-        <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-white/50">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
-              <Bell size={20} />
+      {/* Metric Tiles */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="border-none shadow-sm bg-indigo-600 text-white">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <TrendingUp size={20} className="text-indigo-200" />
+              <Badge variant="secondary" className="bg-white/10 text-white border-none">Live Metric</Badge>
             </div>
-            <div>
-              <h2 className="text-xl font-bold text-slate-900">Notifications</h2>
-              <p className="text-sm text-slate-500">Stay updated with class alerts</p>
+            <p className="text-sm font-bold text-indigo-100 uppercase tracking-wider">Overall Rate</p>
+            <h3 className="text-4xl font-black mt-1">{Math.round(metrics?.overall_attendance || 0)}%</h3>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-100 shadow-sm">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <BookOpen size={20} className="text-purple-600" />
+              <Zap size={16} className="text-amber-500" />
             </div>
+            <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Total Courses</p>
+            <h3 className="text-4xl font-black mt-1 text-slate-900">{metrics?.courses_performance.length}</h3>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-100 shadow-sm">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <Target size={20} className="text-pink-600" />
+              <Award size={16} className="text-indigo-600" />
+            </div>
+            <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Target Goal</p>
+            <h3 className="text-4xl font-black mt-1 text-slate-900">85%</h3>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-100 shadow-sm">
+          <CardContent className="p-6 text-center flex flex-col items-center justify-center">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Eligibility Status</p>
+            {statusBadge(metrics?.overall_attendance || 0)}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Main Command Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+        {/* Left Column - Performance Breakdown */}
+        <div className="lg:col-span-8 space-y-8">
+          <Tabs defaultValue="trend" className="w-full">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-black text-slate-900">Performance Analytics</h2>
+              <TabsList className="bg-slate-100/50 p-1">
+                <TabsTrigger value="trend">Attendance Trend</TabsTrigger>
+                <TabsTrigger value="radar">Subject Radar</TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="trend">
+              <Card className="border-slate-50 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg">Consistency Map</CardTitle>
+                  <CardDescription>Visual tracker of your last 7 sessions.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[400px] w-full">
+                    <Line
+                      data={lineData}
+                      options={{
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                          y: { display: false },
+                          x: { grid: { display: false } }
+                        },
+                        plugins: { legend: { display: false } }
+                      }}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="radar">
+              <Card className="border-slate-50 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg">Curriculum Radar</CardTitle>
+                  <CardDescription>Attendance distribution across your registered courses.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex justify-center p-8">
+                  <div className="h-[400px] w-full max-w-[500px]">
+                    <Radar
+                      data={radarData}
+                      options={{
+                        maintainAspectRatio: false,
+                        scales: {
+                          r: {
+                            angleLines: { display: false },
+                            suggestedMin: 0,
+                            suggestedMax: 100
+                          }
+                        }
+                      }}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+
+          {/* Course List Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {metrics?.courses_performance.map((cp, i) => (
+              <Card key={i} className="border-slate-100 hover:border-indigo-200 transition-colors shadow-none cursor-default group">
+                <CardContent className="p-5 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
+                      <Calendar size={18} />
+                    </div>
+                    <div>
+                      <p className="font-black text-slate-900">{cp.course_name}</p>
+                      <p className="text-xs text-slate-400 font-bold uppercase tracking-tighter">Academic Course</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-black text-indigo-600">{Math.round(cp.percentage)}%</p>
+                    <div className="w-16 h-1 bg-slate-100 rounded-full mt-1 overflow-hidden ml-auto">
+                      <div className="h-full bg-indigo-500" style={{ width: `${cp.percentage}%` }}></div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
-          <Link to="/student/notifications" className="text-sm font-bold text-primary hover:text-primary-hover transition-colors flex items-center gap-1 group">
-            View All <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
-          </Link>
         </div>
 
-        <div className="p-8">
-          <div className="space-y-4">
-            {notifications.length > 0 ? (
-              notifications.slice(0, 3).map((notif, index) => (
-                <div
-                  key={notif.notificationId}
-                  className="animate-fade-in-up"
-                  style={{ animationDelay: `${index * 100}ms` }}
-                >
-                  <NotificationListItem notification={notif} />
+        {/* Right Column - Status */}
+        <div className="lg:col-span-4 space-y-8">
+          <Card className="border-slate-50 shadow-md">
+            <CardHeader>
+              <CardTitle className="text-lg">Overall Engagement</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col items-center">
+              <div className="relative h-64 w-64 mb-6">
+                <Doughnut
+                  data={doughnutData}
+                  options={{
+                    cutout: '80%',
+                    plugins: { legend: { display: false } }
+                  }}
+                />
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-4xl font-black text-slate-900">{Math.round(metrics?.overall_attendance || 0)}%</span>
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Attendance</span>
                 </div>
-              ))
-            ) : (
-              <div className="text-center py-12">
-                <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mx-auto mb-4 border border-slate-100">
-                  <Bell className="text-slate-300" size={32} />
-                </div>
-                <h3 className="text-slate-900 font-bold">No new notifications</h3>
-                <p className="text-slate-500 text-sm">You're all caught up for now!</p>
               </div>
-            )}
-          </div>
+              <div className="w-full space-y-4 pt-4 border-t border-slate-50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
+                    <span className="text-sm font-bold text-slate-600">Present</span>
+                  </div>
+                  <span className="text-sm font-black text-slate-900">{Math.round(metrics?.overall_attendance || 0)}%</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-slate-100"></div>
+                    <span className="text-sm font-bold text-slate-600">Unaccounted</span>
+                  </div>
+                  <span className="text-sm font-black text-slate-900">{100 - Math.round(metrics?.overall_attendance || 0)}%</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
-      </div>
 
-      {/* Modern Card for Free Time (Replaces Classes if empty) */}
-      {notifications.length === 0 && (
-        <div className="rounded-[2.5rem] bg-slate-900 p-10 text-white relative overflow-hidden group">
-          <div className="relative z-10">
-            <h2 className="text-2xl font-bold mb-2">Weekend Vibes?</h2>
-            <p className="text-slate-400 mb-6">No scheduled classes right now. Take some time for self-study or relaxation!</p>
-            <button className="bg-white text-slate-900 px-6 py-2.5 rounded-xl font-bold hover:bg-slate-100 transition-colors">
-              Check Resources
-            </button>
-          </div>
-          <Clock className="absolute top-1/2 right-10 -translate-y-1/2 text-white/5 w-64 h-64 rotate-12 group-hover:rotate-0 transition-transform duration-1000" />
-        </div>
-      )}
+      </div>
     </div>
   );
 };

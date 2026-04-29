@@ -4,7 +4,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell,
 } from 'recharts';
 import { fetchDashboardData } from '../../api';
-import type { DashboardStats, AttendanceTrend, AttendanceDistribution, CoursePerformance, ActivityItem } from '../../api';
+import type { DashboardStats, AttendanceTrend, AttendanceDistribution, CoursePerformance } from '../../api';
 import { useAuth } from '../../AuthContext';
 import './Dashboard.css';
 
@@ -20,7 +20,6 @@ export default function Dashboard() {
   const [trends, setTrends] = useState<AttendanceTrend[]>([]);
   const [distribution, setDistribution] = useState<AttendanceDistribution | null>(null);
   const [performance, setPerformance] = useState<CoursePerformance[]>([]);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -33,7 +32,6 @@ export default function Dashboard() {
       setTrends(data.trends);
       setDistribution(data.distribution);
       setPerformance(data.performance);
-      setActivity(data.activity);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load dashboard');
     } finally {
@@ -49,11 +47,11 @@ export default function Dashboard() {
 
   const pieData = distribution
     ? [
-        { name: 'Excellent', value: distribution.excellent },
-        { name: 'Good', value: distribution.good },
-        { name: 'Fair', value: distribution.fair },
-        { name: 'Poor', value: distribution.poor },
-      ].filter(d => d.value > 0)
+      { name: 'Excellent', value: distribution.excellent },
+      { name: 'Good', value: distribution.good },
+      { name: 'Fair', value: distribution.fair },
+      { name: 'Poor', value: distribution.poor },
+    ].filter(d => d.value > 0)
     : [];
 
   if (loading) {
@@ -209,29 +207,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Activity Feed */}
-      <div className="chart-card full">
-        <h3>Recent Activity</h3>
-        <p className="chart-sub">Real-time updates from your department</p>
-        <div className="activity-list">
-          {activity.length > 0 ? (
-            activity.map((a, i) => (
-              <div key={i} className="activity-item">
-                <span className={`activity-icon icon-${a.type}`}>
-                  {a.type === 'success' ? '✓' : a.type === 'warning' ? '!' : 'i'}
-                </span>
-                <div className="activity-info">
-                  <span className="activity-title">{a.message}</span>
-                  <span className="activity-meta">{a.detail}</span>
-                </div>
-                <span className="activity-time">{a.time}</span>
-              </div>
-            ))
-          ) : (
-            <div className="empty-state">No recent activity yet</div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

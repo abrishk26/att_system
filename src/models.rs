@@ -101,6 +101,7 @@ pub struct UserProfile {
     pub last_name: Option<String>,
     pub role: String,
     pub img_url: Option<String>,
+    pub nfc_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -112,6 +113,17 @@ pub struct PermissionWithStudent {
     pub description: String,
     pub img_url: Option<String>,
     pub status: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StudentProfile {
+    pub id: Uuid,
+    pub nfc_id: String,
+    pub first_name: String,
+    pub last_name: Option<String>,
+    pub username: String,
+    pub img_url: Option<String>,
+    pub attendance_percentage: Option<f64>,
 }
 
 #[derive(Deserialize)]
