@@ -1,12 +1,12 @@
 use uuid::Uuid;
-use diesel::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
+use diesel::{BoolExpressionMethods, ExpressionMethods, QueryDsl, JoinOnDsl};
 use axum::{extract::{State, Path, Multipart}, http::{StatusCode, Method}, Json};
 use crate::types::*;
-use crate::schema::attendance_record;
+use crate::schema::{attendance_record, profiles, students};
 use crate::helpers::internal_error;
 use crate::models::{
     AttendanceRecordWithStudent, AttendanceRecord, Course,
-    UpdateRecordRequest, UserProfile, Permission,
+    UpdateRecordRequest, Permission,
 };
 
 pub async fn get_sessions_by_student(
@@ -65,42 +65,42 @@ pub async fn get_records_with_student_info(
 
     let records = attendance_record::table
         .filter(attendance_record::session_id.eq(session_id))
-        .load::<AttendanceRecord>(&mut conn)
+        .inner_join(students::table.on(students::id.eq(attendance_record::student_id)))
+        .inner_join(profiles::table.on(profiles::id.eq(students::id)))
+        .select((
+            attendance_record::id,
+            attendance_record::student_id,
+            attendance_record::session_id,
+            attendance_record::status,
+            profiles::first_name,
+            profiles::last_name,
+            students::nfc_id,
+        ))
+        .load::<(Uuid, Uuid, Uuid, String, String, Option<String>, String)>(&mut conn)
         .await
         .map_err(internal_error)?;
 
-    let mut enriched_records = Vec::new();
-
-    for record in records {
-        let response = state
-            .client
-            .request(
-                Method::GET,
-                format!(
-                    "http://127.0.0.1:3000/student/profile?id={}",
-                    record.student_id
-                ),
-            )
-            .send()
-            .await
-            .map_err(internal_error)?;
-
-        if response.status() == StatusCode::OK {
-            let student_info = response.json::<UserProfile>().await.map_err(internal_error)?;
-            enriched_records.push(AttendanceRecordWithStudent {
-                id: record.id,
-                student_id: record.student_id,
-                session_id: record.session_id,
-                status: record.status,
-                student_name: format!(
-                    "{} {}",
-                    student_info.first_name,
-                    student_info.last_name.unwrap_or_default()
-                ),
-                nfc_id: student_info.username, // Assuming username or nfc_id is available
-            });
-        }
-    }
+    let enriched_records = records
+        .into_iter()
+        .map(
+            |(
+                id,
+                student_id,
+                session_id,
+                status,
+                first_name,
+                last_name,
+                nfc_id,
+            )| AttendanceRecordWithStudent {
+                id,
+                student_id,
+                session_id,
+                status,
+                student_name: format!("{} {}", first_name, last_name.unwrap_or_default()),
+                nfc_id,
+            },
+        )
+        .collect();
 
     Ok((StatusCode::OK, Json(enriched_records)))
 }
@@ -114,36 +114,26 @@ pub async fn mark_attendance_handler(
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
 
-    let response = state
-        .client
-        .request(
-            Method::GET,
-            format!(
-                "http://127.0.0.1:3000/student/profile?nfc_id={}",
-                payload.nfc_id
-            ),
-        )
-        .send()
+    let student_id = students::table
+        .filter(students::nfc_id.eq(&payload.nfc_id))
+        .select(students::id)
+        .get_result::<Uuid>(&mut conn)
         .await
-        .map_err(internal_error)?;
-
-    let student_info = match response.status() {
-        StatusCode::OK => response.json::<UserProfile>().await.map_err(internal_error)?,
-        _ => {
-            return Err((
-                response.status(),
+        .map_err(|err| {
+            log::error!("failed to resolve student from nfc_id {}: {}", payload.nfc_id, err);
+            (
+                StatusCode::NOT_FOUND,
                 Json(ErrorResponse {
-                    message: "failed to fetch student profile from data source".to_string(),
+                    message: "student not found".to_string(),
                 }),
-            ));
-        }
-    };
+            )
+        })?;
 
     let record = diesel::update(attendance_record::table)
         .filter(
             attendance_record::session_id
                 .eq(payload.session_id)
-                .and(attendance_record::student_id.eq(Uuid::parse_str(&student_info.id).unwrap())),
+                .and(attendance_record::student_id.eq(student_id)),
         )
         .set(attendance_record::status.eq(payload.status))
         .get_result::<AttendanceRecord>(&mut conn)

@@ -24,9 +24,10 @@ pub struct RefreshRequest {
 pub struct Tokens {
     pub access_token: String,
     pub refresh_token: String,
+    pub role: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub message: String,
 }
@@ -34,6 +35,12 @@ pub struct ErrorResponse {
 #[derive(Deserialize)]
 pub struct UserData {
     pub user_id: String,
+    pub role: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CustomClaims {
+    pub role: String,
 }
 
 #[derive(Clone)]
@@ -42,7 +49,10 @@ pub struct AppState {
     pub pool: Pool,
 }
 
-pub struct ClaimsExtractor(pub String);
+pub struct ClaimsExtractor {
+    pub user_id: String,
+    pub role: String,
+}
 
 impl<S> FromRequestParts<S> for ClaimsExtractor
 where
@@ -77,7 +87,7 @@ where
         );
 
         let claims = key
-            .verify_token::<NoCustomClaims>(token, None)
+            .verify_token::<CustomClaims>(token, None)
             .map_err(|e| {
                 log::error!("Token verification failed: {}", e);
                 (
@@ -95,6 +105,65 @@ where
             }),
         ))?;
 
-        Ok(ClaimsExtractor(user_id))
+        let role = claims.custom.role.clone();
+        log::info!("Extracted token claims: user_id={}, role={}", user_id, role);
+
+        Ok(ClaimsExtractor { user_id, role })
+    }
+}
+
+pub struct InstructorClaims {
+    pub user_id: String,
+}
+
+impl<S> FromRequestParts<S> for InstructorClaims
+where
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, Json<ErrorResponse>);
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let claims = ClaimsExtractor::from_request_parts(parts, state).await?;
+        
+        let role_lower = claims.role.to_lowercase();
+        if role_lower != "instructor" && role_lower != "admin" {
+            log::warn!("Instructor access denied: user_id={}, role={}", claims.user_id, claims.role);
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    message: "access denied: instructor role required".to_string(),
+                }),
+            ));
+        }
+
+        Ok(InstructorClaims { user_id: claims.user_id })
+    }
+}
+
+pub struct StudentClaims {
+    pub user_id: String,
+}
+
+impl<S> FromRequestParts<S> for StudentClaims
+where
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, Json<ErrorResponse>);
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let claims = ClaimsExtractor::from_request_parts(parts, state).await?;
+        
+        let role_lower = claims.role.to_lowercase();
+        if role_lower != "student" && role_lower != "admin" {
+            log::warn!("Student access denied: user_id={}, role={}", claims.user_id, claims.role);
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    message: "access denied: student role required".to_string(),
+                }),
+            ));
+        }
+
+        Ok(StudentClaims { user_id: claims.user_id })
     }
 }

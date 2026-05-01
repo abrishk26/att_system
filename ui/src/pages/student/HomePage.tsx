@@ -1,250 +1,322 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { useAttendance } from '../../hooks/student/useAttendance';
-import { useSchedule } from '../../hooks/student/useSchedule';
-import { useNotifs } from '../../hooks/student/useNotifs';
-import { UpcomingClassCard } from '../../components/student/home/UpcomingClassCard';
-import { NotificationListItem } from '../../components/student/home/NotificationListItem';
-import { Link } from 'react-router-dom';
-import { 
-  ChevronRight, 
-  Calendar, 
-  Bell, 
+import { api } from '../../api';
+import type { StudentDashboardMetrics } from '../../api';
+import {
   TrendingUp,
   BookOpen,
-  Clock
+  Target,
+  Calendar,
+  Layers,
+  Award,
+  Zap
 } from 'lucide-react';
+import {
+  Chart as ChartJS,
+  RadialLinearScale,
+  PointElement,
+  LineElement,
+  Filler,
+  Tooltip,
+  Legend,
+  ArcElement,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title
+} from 'chart.js';
+import { Radar, Doughnut, Line } from 'react-chartjs-2';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../components/ui/card";
+import { Badge } from "../../components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+
+ChartJS.register(
+  RadialLinearScale,
+  PointElement,
+  LineElement,
+  Filler,
+  Tooltip,
+  Legend,
+  ArcElement,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title
+);
 
 interface StudentContext {
-    studentId: string;
+  studentId: string;
 }
 
 const HomePage: React.FC = () => {
   const { studentId } = useOutletContext<StudentContext>();
-  const { history, isLoading: attendanceLoading } = useAttendance(studentId);
-  const { todayClasses, isLoading: scheduleLoading } = useSchedule(studentId);
-  const { notifications, isLoading: notifsLoading } = useNotifs(studentId);
+  const [metrics, setMetrics] = useState<StudentDashboardMetrics | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Calculate overall attendance percentage
-  const overallAttendance = React.useMemo(() => {
-    if (!history || history.length === 0) return { attendancePercentage: 0, totalPresent: 0 };
-    const totalSessions = history.reduce((acc, course) => acc + course.totalSessions, 0);
-    const totalPresent = history.reduce((acc, course) => acc + course.present, 0);
-    return {
-        attendancePercentage: totalSessions > 0 ? Math.round((totalPresent / totalSessions) * 100) : 0,
-        totalPresent: totalPresent
+  useEffect(() => {
+    async function loadMetrics() {
+      try {
+        const data = await api.studentDashboardMetrics();
+        setMetrics(data);
+      } catch (err) {
+        console.error('Failed to load student metrics', err);
+      } finally {
+        setIsLoading(false);
+      }
     }
-  }, [history]);
+    loadMetrics();
+  }, [studentId]);
 
-  const isLoading = attendanceLoading || scheduleLoading || notifsLoading;
-
-  // Get greeting based on time of day
-  const getGreeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good morning';
-    if (hour < 18) return 'Good afternoon';
-    return 'Good evening';
-  };
-
-  // Loading skeleton
   if (isLoading) {
     return (
-      <div className="page-shell">
-        <div className="section-shell">
-        {/* Header Skeleton */}
-        <div className="animate-pulse rounded-2xl bg-[var(--aau-primary)] p-6 text-white">
-          <div className="mb-2 h-7 w-56 rounded bg-white/25"></div>
-          <div className="h-3.5 w-72 rounded bg-white/25"></div>
+      <div className="p-8 space-y-8 animate-pulse">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map(i => <div key={i} className="h-24 bg-slate-100 rounded-xl"></div>)}
         </div>
-        
-        {/* Stats Skeleton */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {[1, 2].map((i) => (
-            <div key={i} className="panel-card animate-pulse">
-              <div className="h-4 bg-gray-200 rounded w-24 mb-3"></div>
-              <div className="h-8 bg-gray-200 rounded w-16"></div>
-            </div>
-          ))}
-        </div>
-        
-        {/* Classes Skeleton */}
-        <div className="panel-card animate-pulse">
-          <div className="flex justify-between items-center mb-4">
-            <div className="h-6 bg-gray-200 rounded w-32"></div>
-            <div className="h-4 bg-gray-200 rounded w-16"></div>
-          </div>
-          <div className="space-y-3">
-            {[1, 2].map((i) => (
-              <div key={i} className="h-20 bg-gray-100 rounded-xl"></div>
-            ))}
-          </div>
-        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 h-96 bg-slate-100 rounded-2xl"></div>
+          <div className="h-96 bg-slate-100 rounded-2xl"></div>
         </div>
       </div>
     );
   }
 
+  // Radar Chart Data
+  const radarData = {
+    labels: metrics?.courses_performance.map(cp => cp.course_name) || [],
+    datasets: [
+      {
+        label: 'Attendance Rate %',
+        data: metrics?.courses_performance.map(cp => cp.percentage) || [],
+        backgroundColor: 'rgba(99, 102, 241, 0.2)',
+        borderColor: '#6366f1',
+        borderWidth: 2,
+        pointBackgroundColor: '#6366f1',
+        pointBorderColor: '#fff',
+      },
+    ],
+  };
+
+  // Doughnut Chart Data
+  const doughnutData = {
+    labels: ['Present', 'Absent/Excused'],
+    datasets: [
+      {
+        data: [metrics?.overall_attendance || 0, 100 - (metrics?.overall_attendance || 0)],
+        backgroundColor: ['#6366f1', '#f1f5f9'],
+        borderWidth: 0,
+      },
+    ],
+  };
+
+  // Line Chart Data
+  const lineData = {
+    labels: metrics?.attendance_trend.map(t => t.date) || [],
+    datasets: [
+      {
+        fill: true,
+        label: 'Status (100 = Present)',
+        data: metrics?.attendance_trend.map(t => t.status === 'present' ? 100 : 0) || [],
+        borderColor: '#8b5cf6',
+        backgroundColor: 'rgba(139, 92, 246, 0.1)',
+        tension: 0.4,
+      },
+    ],
+  };
+
+  const statusBadge = (rate: number) => {
+    if (rate >= 85) return <Badge className="bg-emerald-500 hover:bg-emerald-600">Excellent Standing</Badge>;
+    if (rate >= 75) return <Badge className="bg-amber-500 hover:bg-amber-600">Good Standing</Badge>;
+    return <Badge variant="destructive">Warning</Badge>;
+  };
+
   return (
-    <div className="page-shell">
-      <div className="section-shell">
-        
-        {/* Welcome Header */}
-        <div className="relative overflow-hidden rounded-2xl bg-[var(--aau-primary)] p-6 text-white shadow-[var(--aau-shadow-strong)] md:p-8">
-          <div className="relative z-10">
-            <p className="text-sm font-medium text-white/80 md:text-base">
-                {new Date().toLocaleDateString('en-US', { 
-                  weekday: 'long', 
-                  year: 'numeric', 
-                  month: 'long', 
-                  day: 'numeric' 
-                })}
-            </p>
-            <h1 className="mb-1 mt-2 text-2xl font-bold md:text-3xl lg:text-4xl">
-              {getGreeting()}, Student!
-            </h1>
-            <p className="text-sm text-white/85 md:text-base">
-              Ready to make today productive? Let's check your progress.
-            </p>
+    <div className="p-4 md:p-8 space-y-8 max-w-[1600px] mx-auto">
+      {/* Command Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-slate-100 pb-8">
+        <div>
+          <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
+            <Layers className="text-indigo-600" size={32} />
+            Student Dashboard
+          </h1>
+        </div>
+      </div>
+
+      {/* Metric Tiles */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card className="border-none shadow-sm bg-indigo-600 text-white">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <TrendingUp size={20} className="text-indigo-200" />
+              <Badge variant="secondary" className="bg-white/10 text-white border-none">Live Metric</Badge>
+            </div>
+            <p className="text-sm font-bold text-indigo-100 uppercase tracking-wider">Overall Rate</p>
+            <h3 className="text-4xl font-black mt-1">{Math.round(metrics?.overall_attendance || 0)}%</h3>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-100 shadow-sm">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <BookOpen size={20} className="text-purple-600" />
+              <Zap size={16} className="text-amber-500" />
+            </div>
+            <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Total Courses</p>
+            <h3 className="text-4xl font-black mt-1 text-slate-900">{metrics?.courses_performance.length}</h3>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-100 shadow-sm">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <Target size={20} className="text-pink-600" />
+              <Award size={16} className="text-indigo-600" />
+            </div>
+            <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Target Goal</p>
+            <h3 className="text-4xl font-black mt-1 text-slate-900">85%</h3>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-100 shadow-sm">
+          <CardContent className="p-6 text-center flex flex-col items-center justify-center">
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Eligibility Status</p>
+            {statusBadge(metrics?.overall_attendance || 0)}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Main Command Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+        {/* Left Column - Performance Breakdown */}
+        <div className="lg:col-span-8 space-y-8">
+          <Tabs defaultValue="trend" className="w-full">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-black text-slate-900">Performance Analytics</h2>
+              <TabsList className="bg-slate-100/50 p-1">
+                <TabsTrigger value="trend">Attendance Trend</TabsTrigger>
+                <TabsTrigger value="radar">Subject Radar</TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="trend">
+              <Card className="border-slate-50 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg">Consistency Map</CardTitle>
+                  <CardDescription>Visual tracker of your last 7 sessions.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[400px] w-full">
+                    <Line
+                      data={lineData}
+                      options={{
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                          y: { display: false },
+                          x: { grid: { display: false } }
+                        },
+                        plugins: { legend: { display: false } }
+                      }}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="radar">
+              <Card className="border-slate-50 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg">Curriculum Radar</CardTitle>
+                  <CardDescription>Attendance distribution across your registered courses.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex justify-center p-8">
+                  <div className="h-[400px] w-full max-w-[500px]">
+                    <Radar
+                      data={radarData}
+                      options={{
+                        maintainAspectRatio: false,
+                        scales: {
+                          r: {
+                            angleLines: { display: false },
+                            suggestedMin: 0,
+                            suggestedMax: 100
+                          }
+                        }
+                      }}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+
+          {/* Course List Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {metrics?.courses_performance.map((cp, i) => (
+              <Card key={i} className="border-slate-100 hover:border-indigo-200 transition-colors shadow-none cursor-default group">
+                <CardContent className="p-5 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
+                      <Calendar size={18} />
+                    </div>
+                    <div>
+                      <p className="font-black text-slate-900">{cp.course_name}</p>
+                      <p className="text-xs text-slate-400 font-bold uppercase tracking-tighter">Academic Course</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-black text-indigo-600">{Math.round(cp.percentage)}%</p>
+                    <div className="w-16 h-1 bg-slate-100 rounded-full mt-1 overflow-hidden ml-auto">
+                      <div className="h-full bg-indigo-500" style={{ width: `${cp.percentage}%` }}></div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
-          {/* Decorative elements */}
-          <div className="absolute -right-32 -top-32 h-64 w-64 rounded-full bg-white/5"></div>
-          <div className="absolute -bottom-24 -left-24 h-48 w-48 rounded-full bg-[var(--aau-accent)]/20"></div>
         </div>
 
-        {/* Attendance Summary Cards */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6">
-          <div className="panel-card fade-in-up relative">
-            <div className="absolute -right-10 -top-10 h-24 w-24 rounded-full bg-[var(--aau-accent)]/10"></div>
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="mb-1 flex items-center gap-1 text-xs font-medium text-[var(--aau-muted)] md:text-sm">
-                  <TrendingUp className="w-4 h-4" />
-                  Overall Attendance
-                </p>
-                <p className="text-3xl font-bold text-[var(--aau-primary)] md:text-4xl lg:text-5xl">
-                  {overallAttendance.attendancePercentage}%
-                </p>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-[#dbe6ff]">
-                  <div 
-                    className="h-full rounded-full bg-[var(--aau-accent)] transition-all duration-500"
-                    style={{ width: `${overallAttendance.attendancePercentage}%` }}
-                  ></div>
+        {/* Right Column - Status */}
+        <div className="lg:col-span-4 space-y-8">
+          <Card className="border-slate-50 shadow-md">
+            <CardHeader>
+              <CardTitle className="text-lg">Overall Engagement</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col items-center">
+              <div className="relative h-64 w-64 mb-6">
+                <Doughnut
+                  data={doughnutData}
+                  options={{
+                    cutout: '80%',
+                    plugins: { legend: { display: false } }
+                  }}
+                />
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-4xl font-black text-slate-900">{Math.round(metrics?.overall_attendance || 0)}%</span>
+                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Attendance</span>
                 </div>
               </div>
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#e8efff] md:h-14 md:w-14">
-                <TrendingUp className="h-6 w-6 text-[var(--aau-primary)] md:h-7 md:w-7" />
+              <div className="w-full space-y-4 pt-4 border-t border-slate-50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
+                    <span className="text-sm font-bold text-slate-600">Present</span>
+                  </div>
+                  <span className="text-sm font-black text-slate-900">{Math.round(metrics?.overall_attendance || 0)}%</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-slate-100"></div>
+                    <span className="text-sm font-bold text-slate-600">Unaccounted</span>
+                  </div>
+                  <span className="text-sm font-black text-slate-900">{100 - Math.round(metrics?.overall_attendance || 0)}%</span>
+                </div>
               </div>
-            </div>
-          </div>
-
-          <div className="panel-card fade-in-up relative">
-            <div className="absolute -right-10 -top-10 h-24 w-24 rounded-full bg-[var(--aau-primary)]/8"></div>
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="mb-1 flex items-center gap-1 text-xs font-medium text-[var(--aau-muted)] md:text-sm">
-                  <BookOpen className="w-4 h-4" />
-                  Classes Attended
-                </p>
-                <p className="text-3xl font-bold text-[var(--aau-primary)] md:text-4xl lg:text-5xl">
-                  {overallAttendance.totalPresent}
-                </p>
-                <p className="mt-1 text-xs text-[var(--aau-muted)] md:text-sm">
-                  total sessions
-                </p>
-              </div>
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#e8efff] md:h-14 md:w-14">
-                <BookOpen className="h-6 w-6 text-[var(--aau-primary)] md:h-7 md:w-7" />
-              </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Today's Classes Section */}
-        <div className="panel-card fade-in-up">
-          <div className="mb-4 flex items-center justify-between md:mb-6">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#d9ebff] md:h-10 md:w-10">
-                <Calendar className="h-4 w-4 text-[var(--aau-primary)] md:h-5 md:w-5" />
-              </div>
-              <h2 className="text-lg font-bold text-[var(--aau-text)] md:text-xl">Today's Classes</h2>
-            </div>
-            <Link 
-              to="/student/schedule" 
-              className="group flex items-center gap-1 text-sm font-semibold text-[var(--aau-primary)] transition-colors hover:text-[var(--aau-primary-dark)] md:text-base"
-            >
-              View All 
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </Link>
-          </div>
-          
-          <div className="space-y-3">
-            {todayClasses.length > 0 ? (
-              todayClasses.map((cls, index) => (
-                <div 
-                  key={cls.classId}
-                  className="fade-in-up"
-                  style={{ animationDelay: `${index * 100}ms` }}
-                >
-                  <UpcomingClassCard classInfo={cls} />
-                </div>
-              ))
-            ) : (
-              <div className="text-center py-8 md:py-12">
-                <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-[#eef2f7] md:h-20 md:w-20">
-                  <Clock className="h-8 w-8 text-gray-400 md:h-10 md:w-10" />
-                </div>
-                <p className="font-medium text-[var(--aau-muted)]">No classes scheduled for today</p>
-                <p className="mt-1 text-sm text-gray-400">Enjoy your free time!</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Recent Notifications Section */}
-        <div className="panel-card fade-in-up">
-          <div className="mb-4 flex items-center justify-between md:mb-6">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#d9ebff] md:h-10 md:w-10">
-                <Bell className="h-4 w-4 text-[var(--aau-primary)] md:h-5 md:w-5" />
-              </div>
-              <h2 className="text-lg font-bold text-[var(--aau-text)] md:text-xl">Recent Notifications</h2>
-              {notifications.length > 0 && (
-                <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs font-bold text-white">
-                  {notifications.length}
-                </span>
-              )}
-            </div>
-            <Link 
-              to="/student/notifications" 
-              className="group flex items-center gap-1 text-sm font-semibold text-[var(--aau-primary)] transition-colors hover:text-[var(--aau-primary-dark)] md:text-base"
-            >
-              View All 
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </Link>
-          </div>
-          
-          <div className="space-y-2">
-            {notifications.length > 0 ? (
-              notifications.slice(0, 3).map((notif, index) => (
-                <div 
-                  key={notif.notificationId}
-                  className="fade-in-up"
-                  style={{ animationDelay: `${index * 100}ms` }}
-                >
-                  <NotificationListItem notification={notif} />
-                </div>
-              ))
-            ) : (
-              <div className="text-center py-8">
-                <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-[#eef2f7]">
-                  <Bell className="h-8 w-8 text-gray-400" />
-                </div>
-                <p className="font-medium text-[var(--aau-muted)]">No new notifications</p>
-                <p className="mt-1 text-sm text-gray-400">You're all caught up!</p>
-              </div>
-            )}
-          </div>
-        </div>
       </div>
     </div>
   );
