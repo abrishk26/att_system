@@ -130,3 +130,22 @@ pub struct StudentProfile {
 pub struct UpdatePermissionStatusRequest {
     pub status: String,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CoursePerformance {
+    pub course_name: String,
+    pub percentage: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AttendanceTrend {
+    pub date: String,
+    pub status: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StudentDashboardMetrics {
+    pub overall_attendance: f64,
+    pub courses_performance: Vec<CoursePerformance>,
+    pub attendance_trend: Vec<AttendanceTrend>,
+}
