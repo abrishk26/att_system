@@ -6,7 +6,6 @@ import {
     BookOpen,
     Activity,
     Calendar,
-    ArrowRight,
     TrendingUp,
     BarChart3
 } from 'lucide-react';
@@ -26,6 +25,14 @@ import {
 import { Bar, Line, Doughnut } from 'react-chartjs-2';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { Badge } from "../../components/ui/badge";
+
+import StudentReports from '../../components/instructor/reports/StudentReports';
+import SessionReports from '../../components/instructor/reports/SessionReports';
+import ComparativeReports from '../../components/instructor/reports/ComparativeReports';
+import ReportGeneratorDialog from '../../components/instructor/reports/ReportGeneratorDialog';
+import { exportToPDF, exportToCSV } from '../../lib/exportUtils';
 
 ChartJS.register(
     CategoryScale,
@@ -40,20 +47,64 @@ ChartJS.register(
     Filler
 );
 
+interface EnrichedAssignment extends Assignment {
+    course_name?: string;
+    class_name?: string;
+}
+
+interface EnrichedMetrics extends InstructorDashboardMetrics {
+    course_performance: Array<{ course_id: string; course_name?: string; attendance_rate: number }>;
+}
+
 export default function InstructorDashboard() {
-    const [assignments, setAssignments] = useState<Assignment[]>([]);
-    const [metrics, setMetrics] = useState<InstructorDashboardMetrics | null>(null);
+    const [assignments, setAssignments] = useState<EnrichedAssignment[]>([]);
+    const [metrics, setMetrics] = useState<EnrichedMetrics | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
         async function loadData() {
             try {
-                const [assigns, met] = await Promise.all([
+                const [rawAssigns, rawMetrics] = await Promise.all([
                     api.instructorAssignments(),
                     api.instructorDashboardMetrics()
                 ]);
-                setAssignments(assigns);
-                setMetrics(met);
+
+                // Enrich Assignments with Course and Class Names
+                const enrichedAssigns = await Promise.all(
+                    rawAssigns.map(async (a) => {
+                        try {
+                            const [course, cls] = await Promise.all([
+                                api.courseDetails(a.course_id),
+                                api.classDetails(a.class_id)
+                            ]);
+                            return { 
+                                ...a, 
+                                course_name: course.name || course.course_id, 
+                                class_name: `Year ${cls.year} Sec ${cls.section}` 
+                            } as EnrichedAssignment;
+                        } catch {
+                            return a as EnrichedAssignment;
+                        }
+                    })
+                );
+
+                // Create a lookup map for course_id to course_name
+                const courseNameMap = new Map<string, string>();
+                enrichedAssigns.forEach(a => {
+                    if (a.course_name) courseNameMap.set(a.course_id.substring(0, 8), a.course_name);
+                });
+
+                // Enrich Metrics
+                const enrichedMetrics: EnrichedMetrics = {
+                    ...rawMetrics,
+                    course_performance: rawMetrics.course_performance.map(cp => ({
+                        ...cp,
+                        course_name: courseNameMap.get(cp.course_id) || cp.course_id.substring(0, 8)
+                    }))
+                };
+
+                setAssignments(enrichedAssigns);
+                setMetrics(enrichedMetrics);
             } catch (err) {
                 console.error('Failed to load dashboard data', err);
             } finally {
@@ -65,10 +116,10 @@ export default function InstructorDashboard() {
 
     if (isLoading) {
         return (
-            <div className="p-8 space-y-8 animate-pulse">
+            <div className="p-8 space-y-8 animate-pulse max-w-[1600px] mx-auto">
                 <div className="h-20 bg-slate-100 rounded-2xl w-1/4"></div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    {[1, 2, 3, 4].map(i => <div key={i} className="h-28 bg-slate-100 rounded-2xl"></div>)}
+                    {[1, 2, 3, 4].map(i => <div key={i} className="h-32 bg-slate-100 rounded-2xl"></div>)}
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-2 h-96 bg-slate-100 rounded-3xl"></div>
@@ -79,12 +130,18 @@ export default function InstructorDashboard() {
     }
 
     const performanceData = {
-        labels: metrics?.course_performance.map(cp => cp.course_id) || [],
+        labels: metrics?.course_performance.map(cp => cp.course_name) || [],
         datasets: [
             {
                 label: 'Attendance Rate %',
                 data: metrics?.course_performance.map(cp => cp.attendance_rate) || [],
-                backgroundColor: 'rgba(99, 102, 241, 0.8)',
+                backgroundColor: (context: any) => {
+                    const ctx = context.chart.ctx;
+                    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+                    gradient.addColorStop(0, 'rgba(56, 189, 248, 0.9)'); // Sky 400
+                    gradient.addColorStop(1, 'rgba(59, 130, 246, 0.8)'); // Blue 500
+                    return gradient;
+                },
                 borderRadius: 8,
             },
         ],
@@ -97,9 +154,19 @@ export default function InstructorDashboard() {
                 label: 'Department Avg',
                 data: metrics?.trends.map(t => t.rate) || [],
                 borderColor: '#6366f1',
-                backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                backgroundColor: (context: any) => {
+                    const ctx = context.chart.ctx;
+                    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+                    gradient.addColorStop(0, 'rgba(99, 102, 241, 0.4)');
+                    gradient.addColorStop(1, 'rgba(99, 102, 241, 0)');
+                    return gradient;
+                },
                 fill: true,
                 tension: 0.4,
+                borderWidth: 3,
+                pointBackgroundColor: '#fff',
+                pointBorderColor: '#6366f1',
+                pointRadius: 4,
             },
         ],
     };
@@ -120,15 +187,26 @@ export default function InstructorDashboard() {
         ],
     };
 
+
+
+    const handleExportPDF = (filename: string, headers: any[], data: any[]) => {
+        exportToPDF(filename, headers, data, filename);
+    };
+
+    const handleExportCSV = (data: any[], filename: string) => {
+        exportToCSV(data, filename);
+    };
+
     return (
-        <div className="p-4 md:p-8 space-y-10 max-w-[1600px] mx-auto">
+        <div className="p-4 md:p-8 space-y-10 max-w-[1600px] mx-auto animate-fade-in-up">
             {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-slate-100 pb-10">
-                <div className="space-y-1">
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-slate-100 pb-8">
+                <div className="space-y-2">
                     <h1 className="text-4xl font-black text-slate-900 tracking-tight flex items-center gap-3">
                         <BarChart3 className="text-indigo-600" size={32} />
                         Instructor Console
                     </h1>
+                    <p className="text-slate-500 font-medium">Gain deep insights into your students' attendance performance.</p>
                 </div>
             </div>
 
@@ -166,105 +244,8 @@ export default function InstructorDashboard() {
 
             {/* Data Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-
-                {/* Visual Analytics */}
-                <div className="lg:col-span-8 space-y-8">
-                    <Tabs defaultValue="courses" className="w-full">
-                        <div className="flex items-center justify-between mb-8">
-                            <h2 className="text-2xl font-black text-slate-900">Analytics Suite</h2>
-                            <TabsList className="bg-slate-100/80 p-1">
-                                <TabsTrigger value="courses">Course Comparison</TabsTrigger>
-                                <TabsTrigger value="trends">Timeline Trend</TabsTrigger>
-                            </TabsList>
-                        </div>
-
-                        <TabsContent value="courses">
-                            <Card className="border-slate-50 shadow-md">
-                                <CardHeader>
-                                    <CardTitle>Attendance Distribution</CardTitle>
-                                    <CardDescription>Cross-course performance benchmarking.</CardDescription>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="h-[400px] w-full">
-                                        <Bar
-                                            data={performanceData}
-                                            options={{
-                                                responsive: true,
-                                                maintainAspectRatio: false,
-                                                plugins: { legend: { display: false } },
-                                                scales: {
-                                                    y: { beginAtZero: true, max: 100, grid: { color: '#f8fafc' } },
-                                                    x: { grid: { display: false } }
-                                                }
-                                            }}
-                                        />
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        </TabsContent>
-
-                        <TabsContent value="trends">
-                            <Card className="border-slate-50 shadow-md">
-                                <CardHeader>
-                                    <CardTitle>Temporal Analytics</CardTitle>
-                                    <CardDescription>Last 7 sessions aggregate attendance movement.</CardDescription>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="h-[400px] w-full">
-                                        <Line
-                                            data={trendData}
-                                            options={{
-                                                responsive: true,
-                                                maintainAspectRatio: false,
-                                                plugins: { legend: { display: false } },
-                                                scales: {
-                                                    y: { display: false },
-                                                    x: { grid: { display: false } }
-                                                }
-                                            }}
-                                        />
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        </TabsContent>
-                    </Tabs>
-
-                    {/* Quick Course Access */}
-                    <div className="space-y-6">
-                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 px-2">
-                            <BookOpen className="text-purple-600" size={24} />
-                            My Courses
-                        </h2>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {assignments.map((assign) => (
-                                <Card key={assign.id} className="p-6 rounded-[2rem] border-2 border-slate-50 bg-white hover:border-purple-200 transition-all cursor-pointer group shadow-sm hover:shadow-md">
-                                    <div className="flex items-start justify-between mb-4">
-                                        <div>
-                                            <h4 className="text-lg font-black text-slate-900 group-hover:text-purple-600 transition-colors uppercase tracking-tight">{assign.course_id.toString().slice(0, 8)}</h4>
-                                            <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Section {assign.class_id.toString().slice(0, 8)}</p>
-                                        </div>
-                                        <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400 opacity-0 group-hover:opacity-100 transition-all">
-                                            <ArrowRight size={18} />
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex -space-x-3">
-                                            {[1, 2, 3].map(i => (
-                                                <div key={i} className="w-8 h-8 rounded-xl bg-slate-100 border-2 border-white text-[10px] flex items-center justify-center font-black text-slate-500 shadow-sm">
-                                                    {i}
-                                                </div>
-                                            ))}
-                                        </div>
-                                        <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Linked</span>
-                                    </div>
-                                </Card>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-
-                {/* Status Column */}
-                <div className="lg:col-span-4 space-y-8">
+                {/* Status & Insights Column */}
+                <div className="lg:col-span-4 space-y-8 order-2 lg:order-1">
                     <Card className="border-slate-50 shadow-lg">
                         <CardHeader>
                             <div className="flex items-center gap-2">
@@ -287,8 +268,198 @@ export default function InstructorDashboard() {
                             </div>
                         </CardContent>
                     </Card>
+
+
+                    {/* Quick Course Access */}
+                    <div className="space-y-6">
+                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 px-2">
+                            <BookOpen className="text-purple-600" size={24} />
+                            My Assignments
+                        </h2>
+                        <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
+                            <Table>
+                                <TableHeader className="bg-slate-50/50">
+                                    <TableRow className="hover:bg-transparent">
+                                        <TableHead className="font-bold text-slate-500 pl-6">Course</TableHead>
+                                        <TableHead className="text-right font-bold text-slate-500 pr-6">Class</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {assignments.map((assign) => (
+                                        <TableRow key={assign.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer group" onClick={() => {/* handle navigation */}}>
+                                            <TableCell className="pl-6">
+                                                <div className="flex flex-col">
+                                                    <span className="font-bold text-slate-900 text-sm group-hover:text-purple-600 transition-colors">
+                                                        {assign.course_name || assign.course_id.toString().slice(0, 8)}
+                                                    </span>
+                                                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Assignment</span>
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="text-right pr-6">
+                                                <Badge variant="outline" className="border-slate-100 text-slate-500 font-bold text-[10px]">
+                                                    {assign.class_name || `Section ${assign.class_id.toString().slice(0, 8)}`}
+                                                </Badge>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </div>
+
+                    {/* Recent Attendances Table */}
+                    <div className="space-y-6">
+                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 px-2">
+                            <Activity className="text-emerald-600" size={24} />
+                            Recent Attendances
+                        </h2>
+                        <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
+                            <Table>
+                                <TableHeader className="bg-slate-50/50">
+                                    <TableRow className="hover:bg-transparent">
+                                        <TableHead className="font-bold text-slate-500 pl-6">Session</TableHead>
+                                        <TableHead className="text-center font-bold text-slate-500">Rate</TableHead>
+                                        <TableHead className="text-right font-bold text-slate-500 pr-6">Status</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {metrics?.course_performance.slice(0, 5).map((cp, i) => (
+                                        <TableRow key={i} className="hover:bg-slate-50/50 transition-colors">
+                                            <TableCell className="pl-6">
+                                                <div className="flex flex-col">
+                                                    <span className="font-bold text-slate-900 text-sm">
+                                                        {cp.course_id.substring(0, 8)}
+                                                    </span>
+                                                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Recorded</span>
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="text-center">
+                                                <span className={`font-black ${cp.attendance_rate < 75 ? 'text-rose-500' : 'text-emerald-600'}`}>
+                                                    {Math.round(cp.attendance_rate)}%
+                                                </span>
+                                            </TableCell>
+                                            <TableCell className="text-right pr-6">
+                                                <Badge variant="outline" className={cp.attendance_rate < 75 ? 'border-rose-100 text-rose-500' : 'border-emerald-100 text-emerald-500'}>
+                                                    {cp.attendance_rate < 75 ? 'Intervene' : 'Good'}
+                                                </Badge>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </div>
                 </div>
 
+                {/* Visual Analytics */}
+                <div className="lg:col-span-8 space-y-8 order-1 lg:order-2">
+                    <Tabs defaultValue="summary" className="w-full">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+                            <h2 className="text-2xl font-black text-slate-900">Analytics Suite</h2>
+                            
+                            <div className="flex items-center gap-4">
+                                <TabsList className="bg-slate-100/80 p-1 hidden md:flex rounded-xl">
+                                    <TabsTrigger value="summary" className="rounded-lg">Summary</TabsTrigger>
+                                    <TabsTrigger value="students" className="rounded-lg">Students</TabsTrigger>
+                                    <TabsTrigger value="sessions" className="rounded-lg">Sessions</TabsTrigger>
+                                    <TabsTrigger value="comparative" className="rounded-lg">Comparative</TabsTrigger>
+                                </TabsList>
+                                
+                                <ReportGeneratorDialog 
+                                    assignments={assignments} 
+                                    metrics={metrics}
+                                    onExportPDF={handleExportPDF} 
+                                    onExportCSV={handleExportCSV} 
+                                />
+                            </div>
+                            <TabsList className="bg-slate-100/80 p-1 flex md:hidden w-full overflow-x-auto rounded-xl">
+                                <TabsTrigger value="summary">Summary</TabsTrigger>
+                                <TabsTrigger value="students">Students</TabsTrigger>
+                                <TabsTrigger value="sessions">Sessions</TabsTrigger>
+                                <TabsTrigger value="comparative">Comparative</TabsTrigger>
+                            </TabsList>
+                        </div>
+
+                        {/* Summary Tab */}
+                        <TabsContent value="summary" className="space-y-6">
+                            <Card className="border-slate-50 shadow-md">
+                                <CardHeader>
+                                    <CardTitle>Attendance Distribution</CardTitle>
+                                    <CardDescription>Cross-course performance benchmarking using actual course names.</CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="h-[300px] w-full">
+                                        <Bar
+                                            data={performanceData}
+                                            options={{
+                                                responsive: true,
+                                                maintainAspectRatio: false,
+                                                plugins: { 
+                                                    legend: { display: false },
+                                                    tooltip: {
+                                                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                                                        titleFont: { size: 14, family: 'Inter' },
+                                                        padding: 12,
+                                                        cornerRadius: 8,
+                                                    }
+                                                },
+                                                scales: {
+                                                    y: { beginAtZero: true, max: 100, grid: { color: '#f8fafc' }, ticks: { font: { family: 'Inter', weight: 600 as const } } },
+                                                    x: { grid: { display: false }, ticks: { font: { family: 'Inter', weight: 600 as const } } }
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                </CardContent>
+                            </Card>
+
+                            <Card className="border-slate-50 shadow-md">
+                                <CardHeader>
+                                    <CardTitle>Temporal Analytics</CardTitle>
+                                    <CardDescription>Aggregate attendance movement over time.</CardDescription>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="h-[300px] w-full">
+                                        <Line
+                                            data={trendData}
+                                            options={{
+                                                responsive: true,
+                                                maintainAspectRatio: false,
+                                                plugins: { 
+                                                    legend: { display: false },
+                                                    tooltip: {
+                                                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                                                        padding: 12,
+                                                    }
+                                                },
+                                                scales: {
+                                                    y: { display: false },
+                                                    x: { grid: { display: false }, ticks: { font: { family: 'Inter', weight: 600 as const } } }
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </TabsContent>
+
+                        {/* Students Tab */}
+                        <TabsContent value="students" className="mt-0">
+                            <StudentReports assignments={assignments} />
+                        </TabsContent>
+
+                        {/* Sessions Tab */}
+                        <TabsContent value="sessions" className="mt-0">
+                            <SessionReports assignments={assignments} />
+                        </TabsContent>
+
+                        {/* Comparative Tab */}
+                        <TabsContent value="comparative" className="mt-0">
+                            <ComparativeReports metrics={metrics} />
+                        </TabsContent>
+
+                    </Tabs>
+                </div>
             </div>
         </div>
     );

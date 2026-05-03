@@ -6,7 +6,6 @@ import {
   TrendingUp,
   BookOpen,
   Target,
-  Calendar,
   Layers,
   Award,
   Zap
@@ -29,6 +28,7 @@ import { Radar, Doughnut, Line } from 'react-chartjs-2';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../components/ui/card";
 import { Badge } from "../../components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 
 ChartJS.register(
   RadialLinearScale,
@@ -251,29 +251,43 @@ const HomePage: React.FC = () => {
             </TabsContent>
           </Tabs>
 
-          {/* Course List Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {metrics?.courses_performance.map((cp, i) => (
-              <Card key={i} className="border-slate-100 hover:border-indigo-200 transition-colors shadow-none cursor-default group">
-                <CardContent className="p-5 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
-                      <Calendar size={18} />
-                    </div>
-                    <div>
-                      <p className="font-black text-slate-900">{cp.course_name}</p>
-                      <p className="text-xs text-slate-400 font-bold uppercase tracking-tighter">Academic Course</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-lg font-black text-indigo-600">{Math.round(cp.percentage)}%</p>
-                    <div className="w-16 h-1 bg-slate-100 rounded-full mt-1 overflow-hidden ml-auto">
-                      <div className="h-full bg-indigo-500" style={{ width: `${cp.percentage}%` }}></div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+          <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
+            <Table>
+              <TableHeader className="bg-slate-50/50">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="font-bold text-slate-500 pl-6">Course Name</TableHead>
+                  <TableHead className="text-center font-bold text-slate-500">Analytics</TableHead>
+                  <TableHead className="text-right font-bold text-slate-500 pr-6">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {metrics?.courses_performance.map((cp, i) => (
+                  <TableRow key={i} className="hover:bg-slate-50/50 transition-colors group">
+                    <TableCell className="pl-6">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
+                          <BookOpen size={16} />
+                        </div>
+                        <span className="font-bold text-slate-900">{cp.course_name}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <div className="flex flex-col items-center gap-1">
+                        <span className="text-sm font-black text-indigo-600">{Math.round(cp.percentage)}%</span>
+                        <div className="w-16 h-1 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-indigo-500" style={{ width: `${cp.percentage}%` }}></div>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right pr-6">
+                      <Badge variant="outline" className={cp.percentage < 75 ? 'border-rose-100 text-rose-500' : 'border-emerald-100 text-emerald-500'}>
+                        {cp.percentage < 75 ? 'At Risk' : 'Healthy'}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
         </div>
 

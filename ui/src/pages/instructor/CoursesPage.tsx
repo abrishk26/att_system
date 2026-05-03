@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, Users, Clock, ArrowRight, Search } from 'lucide-react';
+import { BookOpen, Users, Clock, ArrowRight, Search, Loader2 } from 'lucide-react';
 import { api } from '../../api';
 import { CourseDetailView } from '../../components/instructor/CourseDetailView';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent } from "../../components/ui/card";
 
 interface Course {
     id: string;
@@ -57,8 +60,9 @@ export default function CoursesPage() {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center min-h-[400px]">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+            <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
+                <Loader2 className="animate-spin text-primary" size={32} />
+                <span className="text-slate-500 font-medium">Fetching your courses...</span>
             </div>
         );
     }
@@ -77,81 +81,90 @@ export default function CoursesPage() {
     }
 
     return (
-        <div className="space-y-8 animate-in fade-in duration-500">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="space-y-8 animate-fade-in">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div>
-                    <h1 className="text-3xl font-bold text-slate-900">My Courses</h1>
-                    <p className="text-slate-500 mt-1">Manage your assigned courses and student rosters</p>
+                    <h1 className="text-3xl font-black text-slate-900 tracking-tight">My Assigned Courses</h1>
+                    <p className="text-slate-500 font-medium mt-1">Detailed list of your current curriculum and class rosters</p>
                 </div>
 
-                <div className="flex items-center gap-3">
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                            type="text"
-                            placeholder="Search courses..."
-                            className="bg-white border border-slate-200 pl-10 pr-4 py-2 rounded-xl text-sm focus:ring-2 focus:ring-primary/10 outline-none w-64 shadow-sm"
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
+                <div className="relative">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input
+                        type="text"
+                        placeholder="Search by name or code..."
+                        className="bg-white border border-slate-200 pl-11 pr-4 h-11 rounded-xl text-sm focus:ring-2 focus:ring-primary/10 outline-none w-full md:w-80 shadow-sm transition-all"
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                    />
                 </div>
             </div>
 
-            {filteredCourses.length === 0 ? (
-                <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center shadow-sm">
-                    <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 mx-auto mb-4 border border-slate-100">
-                        <BookOpen size={32} />
-                    </div>
-                    <h3 className="text-lg font-bold text-slate-900">No courses found</h3>
-                    <p className="text-slate-500 mt-1">You don't have any courses assigned to your profile yet.</p>
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {filteredCourses.map((course) => (
-                        <div key={course.id} className="bg-white border border-slate-100 rounded-3xl p-6 hover:shadow-xl hover:shadow-slate-200/50 transition-all group relative overflow-hidden">
-                            <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Search size={20} className="text-primary/20" />
-                            </div>
-
-                            <div className="flex items-start justify-between mb-6">
-                                <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
-                                    <BookOpen size={24} />
-                                </div>
-                                <span className="bg-slate-100 text-slate-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
-                                    {course.course_id}
-                                </span>
-                            </div>
-
-                            <h3 className="text-xl font-bold text-slate-900 mb-2 group-hover:text-primary transition-colors">
-                                {course.name}
-                            </h3>
-                            <p className="text-slate-500 text-sm line-clamp-2 mb-6 h-10">
-                                {course.description || "No description available for this course. Please contact the department for more details."}
-                            </p>
-
-                            <div className="grid grid-cols-2 gap-4 pt-6 border-t border-slate-50">
-                                <div className="flex items-center gap-2 text-slate-600">
-                                    <Users size={16} className="text-slate-400" />
-                                    <span className="text-sm font-medium">{course.studentCount} Students</span>
-                                </div>
-                                <div className="flex items-center gap-2 text-slate-600">
-                                    <Clock size={16} className="text-slate-400" />
-                                    <span className="text-sm font-medium">{course.credit_hours} Credits</span>
-                                </div>
-                            </div>
-
-                            <button
-                                onClick={() => setSelectedCourse(course)}
-                                className="w-full mt-6 py-3.5 bg-slate-900 text-white font-bold rounded-2xl transition-all hover:bg-primary shadow-lg shadow-slate-900/10 hover:shadow-primary/20 flex items-center justify-center gap-2 group/btn active:scale-95"
-                            >
-                                View Detailed Roster
-                                <ArrowRight size={18} className="transition-transform group-hover/btn:translate-x-1" />
-                            </button>
-                        </div>
-                    ))}
-                </div>
-            )}
+            <Card className="border-slate-50 shadow-md overflow-hidden rounded-3xl">
+                <CardContent className="p-0">
+                    <Table>
+                        <TableHeader className="bg-slate-50/50">
+                            <TableRow className="hover:bg-transparent">
+                                <TableHead className="w-16 px-6 font-bold text-slate-500 text-center">Icon</TableHead>
+                                <TableHead className="font-bold text-slate-500">Course Identification</TableHead>
+                                <TableHead className="font-bold text-slate-500">Enrolled Students</TableHead>
+                                <TableHead className="font-bold text-slate-500">Credit Load</TableHead>
+                                <TableHead className="text-right px-6 font-bold text-slate-500">Actions</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {filteredCourses.map((course) => (
+                                <TableRow key={course.id} className="hover:bg-slate-50/50 transition-colors group">
+                                    <TableCell className="px-6">
+                                        <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors mx-auto">
+                                            <BookOpen size={20} />
+                                        </div>
+                                    </TableCell>
+                                    <TableCell>
+                                        <div className="flex flex-col">
+                                            <span className="font-bold text-slate-900 leading-tight">{course.name}</span>
+                                            <span className="text-[10px] font-black uppercase tracking-widest text-indigo-500 mt-0.5">{course.course_id}</span>
+                                        </div>
+                                    </TableCell>
+                                    <TableCell>
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center">
+                                                <Users size={14} className="text-emerald-600" />
+                                            </div>
+                                            <span className="text-sm font-bold text-slate-700">{course.studentCount} students</span>
+                                        </div>
+                                    </TableCell>
+                                    <TableCell>
+                                        <div className="flex items-center gap-2">
+                                            <Clock size={16} className="text-slate-400" />
+                                            <span className="text-sm font-medium text-slate-600">{course.credit_hours} Cr.Hrs</span>
+                                        </div>
+                                    </TableCell>
+                                    <TableCell className="text-right px-6">
+                                        <Button 
+                                            onClick={() => setSelectedCourse(course)}
+                                            className="bg-slate-900 hover:bg-indigo-600 text-white font-bold h-9 rounded-lg px-4 transition-all shadow-sm active:scale-95 flex items-center gap-2"
+                                        >
+                                            View Roster
+                                            <ArrowRight size={14} />
+                                        </Button>
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                            {filteredCourses.length === 0 && (
+                                <TableRow>
+                                    <TableCell colSpan={5} className="h-48 text-center">
+                                        <div className="flex flex-col items-center justify-center gap-2">
+                                            <BookOpen size={48} className="text-slate-200" />
+                                            <p className="font-bold text-slate-400">No courses match your search.</p>
+                                        </div>
+                                    </TableCell>
+                                </TableRow>
+                            )}
+                        </TableBody>
+                    </Table>
+                </CardContent>
+            </Card>
         </div>
     );
 }

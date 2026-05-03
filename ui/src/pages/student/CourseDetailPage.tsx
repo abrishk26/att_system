@@ -4,16 +4,14 @@ import { useAttendance } from '../../hooks/student/useAttendance';
 import { AttendanceDonutChart } from '../../components/student/history/AttendanceDonutChart';
 import {
   ArrowLeft,
-  CheckCircle2,
-  XCircle,
   Clock,
   AlertCircle,
-  Calendar,
-  ChevronRight,
   BookOpen,
   PieChart as PieIcon,
   ListFilter
 } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { Badge } from "../../components/ui/badge";
 
 const CourseDetailPage: React.FC = () => {
   const { courseId } = useParams<{ courseId: string }>();
@@ -148,39 +146,42 @@ const CourseDetailPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-hidden">
               {sessions.length > 0 ? (
-                <div className="divide-y-2 divide-slate-50">
-                  {sessions.map((session, index) => (
-                    <div key={index} className="p-6 hover:bg-slate-50 transition-colors flex items-center justify-between group">
-                      <div className="flex items-center gap-5">
-                        <div className="w-12 h-12 bg-white border-2 border-slate-100 flex flex-col items-center justify-center text-slate-900 font-black group-hover:border-primary transition-colors">
-                          <span className="text-[10px] uppercase leading-none text-slate-400">#</span>
-                          <span>{index + 1}</span>
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            <Calendar size={14} className="text-slate-300" />
-                            <span className="text-sm font-black text-slate-900">
+                <Table>
+                  <TableHeader className="bg-slate-900">
+                    <TableRow className="hover:bg-transparent border-none">
+                      <TableHead className="w-16 text-white/50 pl-6 font-black uppercase text-[10px] tracking-widest">#</TableHead>
+                      <TableHead className="text-white font-black uppercase text-[10px] tracking-widest">Date & Time</TableHead>
+                      <TableHead className="text-right text-white font-black uppercase text-[10px] tracking-widest pr-6">Attendance Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="divide-y-2 divide-slate-50">
+                    {sessions.map((session, index) => (
+                      <TableRow key={index} className="hover:bg-slate-50 transition-colors h-20">
+                        <TableCell className="pl-6 font-black text-slate-400">
+                          {index + 1}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-black text-slate-900">
                               {session.date === 'TBA' ? 'Recent Session' : new Date(session.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                             </span>
+                            <span className="text-[10px] font-black uppercase text-slate-400 flex items-center gap-1 mt-1">
+                              <Clock size={10} /> {session.startTime || 'Standard Time'}
+                            </span>
                           </div>
-                          <div className="flex items-center gap-4 text-[10px] font-black uppercase text-slate-400">
-                            <span className="flex items-center gap-1"><Clock size={10} /> {session.startTime || 'Standard Time'}</span>
-                            <span className="flex items-center gap-1"><BookOpen size={10} /> {session.method || 'Portal Check'}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center">
-                        {session.status === 'present' && <span className="bg-emerald-50 text-emerald-600 px-4 py-2 text-xs font-black uppercase flex items-center gap-2 border border-emerald-100">Found <CheckCircle2 size={14} /></span>}
-                        {session.status === 'absent' && <span className="bg-red-50 text-red-600 px-4 py-2 text-xs font-black uppercase flex items-center gap-2 border border-red-100">Absent <XCircle size={14} /></span>}
-                        {session.status === 'late' && <span className="bg-amber-50 text-amber-600 px-4 py-2 text-xs font-black uppercase flex items-center gap-2 border border-amber-100">Late <Clock size={14} /></span>}
-                        {session.status === 'excused' && <span className="bg-blue-50 text-blue-600 px-4 py-2 text-xs font-black uppercase flex items-center gap-2 border border-blue-100">Excused <ChevronRight size={14} /></span>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                        </TableCell>
+                        <TableCell className="text-right pr-6">
+                          {session.status === 'present' && <Badge className="bg-emerald-500 hover:bg-emerald-600 font-black uppercase text-[10px] tracking-widest">Present</Badge>}
+                          {session.status === 'absent' && <Badge variant="destructive" className="font-black uppercase text-[10px] tracking-widest">Absent</Badge>}
+                          {session.status === 'late' && <Badge className="bg-amber-500 hover:bg-amber-600 font-black uppercase text-[10px] tracking-widest">Late</Badge>}
+                          {session.status === 'excused' && <Badge variant="outline" className="text-blue-500 border-blue-100 font-black uppercase text-[10px] tracking-widest">Excused</Badge>}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               ) : (
                 <div className="p-20 text-center">
                   <div className="w-20 h-20 bg-slate-50 border-2 border-slate-100 flex items-center justify-center mx-auto mb-6 grayscale text-slate-300">

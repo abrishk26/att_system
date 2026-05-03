@@ -33,10 +33,11 @@ import {
 } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Input } from "@/components/ui/input"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 interface Session {
     id: string;
@@ -254,53 +255,74 @@ export default function AttendancePage() {
                             <p className="text-slate-500 max-w-sm mx-auto leading-relaxed">Start your first attendance session to begin tracking student presence in real-time.</p>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {sessions.map((session) => {
-                                const course = courses.find(c => c.id === session.course_id);
-                                const classDetail = classes.find(c => c.id === session.class_id);
+                        <div className="bg-white rounded-[2.5rem] border border-slate-100 overflow-hidden shadow-sm">
+                            <Table>
+                                <TableHeader className="bg-slate-50/50">
+                                    <TableRow className="hover:bg-transparent">
+                                        <TableHead className="font-bold text-slate-500 pl-8 h-16">Session Identifier</TableHead>
+                                        <TableHead className="font-bold text-slate-500">Course & Subject</TableHead>
+                                        <TableHead className="font-bold text-slate-500">Class Section</TableHead>
+                                        <TableHead className="font-bold text-slate-500 text-center">Status</TableHead>
+                                        <TableHead className="font-bold text-slate-500 text-right pr-8">Date</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {sessions.map((session) => {
+                                        const course = courses.find(c => c.id === session.course_id);
+                                        const classDetail = classes.find(c => c.id === session.class_id);
 
-                                return (
-                                    <Card
-                                        key={session.id}
-                                        onClick={() => handleSelectSession(session)}
-                                        className="group cursor-pointer border-slate-100 hover:border-primary/30 hover:shadow-2xl hover:shadow-slate-200/50 transition-all duration-500 rounded-[32px] overflow-hidden"
-                                    >
-                                        <CardHeader className="pb-4">
-                                            <div className="flex items-start justify-between">
-                                                <div className={`p-3 rounded-2xl transition-colors ${session.status === 'ongoing' ? 'bg-emerald-50 text-emerald-600' :
-                                                    session.status === 'completed' ? 'bg-slate-50 text-slate-600' : 'bg-primary/5 text-primary'
-                                                    }`}>
-                                                    <Users size={20} />
-                                                </div>
-                                                <Badge variant="secondary" className={`text-[10px] uppercase tracking-widest ${session.status === 'ongoing' ? 'bg-emerald-100/50 text-emerald-700' :
-                                                    session.status === 'completed' ? 'bg-slate-100/50 text-slate-600' : 'bg-primary/10 text-primary'
-                                                    }`}>
-                                                    {session.status}
-                                                </Badge>
-                                            </div>
-                                            <CardTitle className="text-xl font-bold mt-4 line-clamp-1 group-hover:text-primary transition-colors">
-                                                {course?.name || 'Loading Course...'}
-                                            </CardTitle>
-                                            <CardDescription className="font-semibold text-slate-400">
-                                                Class: {classDetail ? `Year ${classDetail.year} - Section ${classDetail.section}` : '...'}
-                                            </CardDescription>
-                                        </CardHeader>
-                                        <CardContent>
-                                            <Separator className="mb-4 bg-slate-50" />
-                                            <div className="flex items-center gap-4 text-xs font-bold text-slate-400">
-                                                <div className="flex items-center gap-1.5">
-                                                    <CalendarDays size={14} />
-                                                    {new Date(session.created_at || Date.now()).toLocaleDateString()}
-                                                </div>
-                                                <div className="flex items-center gap-1.5">
-                                                    <Clock size={14} />
-                                                    {new Date(session.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                </div>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                );
-                            })}
+                                        return (
+                                            <TableRow 
+                                                key={session.id} 
+                                                onClick={() => handleSelectSession(session)}
+                                                className="hover:bg-slate-50/50 transition-colors cursor-pointer h-20 group"
+                                            >
+                                                <TableCell className="pl-8">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+                                                            <History size={18} />
+                                                        </div>
+                                                        <span className="font-mono text-[10px] font-black uppercase tracking-tighter text-slate-400">
+                                                            {session.id.substring(0, 8)}
+                                                        </span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="flex flex-col">
+                                                        <span className="font-bold text-slate-900 group-hover:text-primary transition-colors">{course?.name || 'Loading Course...'}</span>
+                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Academic Curriculum</span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <div className="flex items-center gap-2">
+                                                        <Users size={14} className="text-slate-300" />
+                                                        <span className="text-sm font-medium text-slate-600">
+                                                            {classDetail ? `Year ${classDetail.year} · Sec ${classDetail.section}` : 'N/A'}
+                                                        </span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell className="text-center">
+                                                    <Badge variant="secondary" className={`text-[10px] uppercase tracking-widest rounded-lg px-3 ${session.status === 'ongoing' ? 'bg-emerald-100/50 text-emerald-700' :
+                                                        session.status === 'completed' ? 'bg-slate-100/50 text-slate-600' : 'bg-primary/10 text-primary'
+                                                        }`}>
+                                                        {session.status}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell className="text-right pr-8">
+                                                    <div className="flex flex-col items-end">
+                                                        <span className="font-bold text-slate-900 text-sm">
+                                                            {new Date(session.created_at || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                                        </span>
+                                                        <span className="text-[10px] font-medium text-slate-400">
+                                                            {new Date(session.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                        </span>
+                                                    </div>
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })}
+                                </TableBody>
+                            </Table>
                         </div>
                     )}
                 </div>

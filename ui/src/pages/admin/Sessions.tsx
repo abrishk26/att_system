@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react';
 import { api } from '../../api';
 import type { Session, Assignment, Course, Class } from '../../api';
 import { useAuth } from '../../AuthContext';
-import './Sessions.css';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import { Card, CardContent } from "../../components/ui/card";
+import { Calendar, Play, Square, Loader2, Plus } from 'lucide-react';
 
 interface EnrichedSession extends Session {
   course?: Course;
@@ -71,79 +76,128 @@ export default function Sessions() {
     }
   };
 
-  if (loading) return <div className="loading">Loading sessions...</div>;
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'active': return <Badge className="bg-emerald-500 hover:bg-emerald-600">Active</Badge>;
+      case 'incoming': return <Badge variant="secondary" className="bg-amber-100 text-amber-700 hover:bg-amber-200">Incoming</Badge>;
+      case 'completed':
+      case 'finished': return <Badge variant="outline" className="text-slate-500 border-slate-200">Finished</Badge>;
+      default: return <Badge variant="outline">{status}</Badge>;
+    }
+  };
+
+  if (loading) return (
+    <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
+        <Loader2 className="animate-spin text-primary" size={32} />
+        <span className="text-slate-500 font-medium">Loading sessions...</span>
+    </div>
+  );
 
   return (
-    <div className="sessions-page">
-      <div className="page-header">
+    <div className="space-y-8 animate-fade-in">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
-          <h2>Sessions</h2>
-          <p className="page-sub">Manage your attendance sessions</p>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Attendance Sessions</h1>
+          <p className="text-slate-500 font-medium mt-1">Real-time management of class attendance tracking</p>
         </div>
-        <div className="create-session">
-          <select
-            value={selectedAssignment}
-            onChange={e => setSelectedAssignment(e.target.value)}
-            className="assignment-select"
+        
+        <div className="flex flex-col sm:flex-row gap-3">
+          <Select value={selectedAssignment} onValueChange={setSelectedAssignment}>
+            <SelectTrigger className="w-full sm:w-[280px] h-11 rounded-xl bg-white border-slate-200">
+                <SelectValue placeholder="Select Course & Section" />
+            </SelectTrigger>
+            <SelectContent className="rounded-xl">
+                {assignments.map(a => (
+                    <SelectItem key={a.id} value={a.id}>
+                        Assignment {a.id.slice(0, 8).toUpperCase()}
+                    </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+          <Button 
+            onClick={handleCreate} 
+            disabled={!selectedAssignment || creating}
+            className="h-11 px-6 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold transition-all active:scale-95"
           >
-            <option value="">Select assignment...</option>
-            {assignments.map(a => (
-              <option key={a.id} value={a.id}>
-                Assignment {a.id.slice(0, 8)}
-              </option>
-            ))}
-          </select>
-          <button className="btn-primary" onClick={handleCreate} disabled={!selectedAssignment || creating}>
-            {creating ? 'Creating...' : '+ New Session'}
-          </button>
+            {creating ? <Loader2 className="animate-spin mr-2" size={18} /> : <Plus size={18} className="mr-2" />}
+            New Session
+          </Button>
         </div>
       </div>
 
-      <div className="sessions-table-wrap">
-        <table className="sessions-table">
-          <thead>
-            <tr>
-              <th>Course</th>
-              <th>Class</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sessions.map(s => (
-              <tr key={s.id}>
-                <td>
-                  <div className="cell-main">{s.course?.name ?? 'Unknown'}</div>
-                  <div className="cell-sub">{s.course?.course_id}</div>
-                </td>
-                <td>
-                  {s.class ? `Year ${s.class.year} · Section ${s.class.section}` : '—'}
-                </td>
-                <td>
-                  <span className={`badge badge-${s.status}`}>{s.status}</span>
-                </td>
-                <td>
-                  <div className="action-btns">
-                    {s.status === 'incoming' && (
-                      <button className="btn-sm btn-green" onClick={() => handleStatusChange(s.id, 'active')}>
-                        Start
-                      </button>
-                    )}
-                    {s.status === 'active' && (
-                      <button className="btn-sm btn-purple" onClick={() => handleStatusChange(s.id, 'completed')}>
-                        End
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {sessions.length === 0 && (
-              <tr><td colSpan={4} className="empty-state">No sessions found.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <Card className="border-slate-50 shadow-md overflow-hidden rounded-3xl">
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader className="bg-slate-50/50">
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="w-12 px-6">#</TableHead>
+                <TableHead className="font-bold text-slate-500">Course Details</TableHead>
+                <TableHead className="font-bold text-slate-500">Class Section</TableHead>
+                <TableHead className="font-bold text-slate-500 text-center">Status</TableHead>
+                <TableHead className="text-right px-6 font-bold text-slate-500">Control</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {sessions.map((s, idx) => (
+                <TableRow key={s.id} className="hover:bg-slate-50/50 transition-colors">
+                  <TableCell className="px-6 font-bold text-slate-400">{idx + 1}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col">
+                        <span className="font-bold text-slate-900">{s.course?.name ?? 'Unknown Course'}</span>
+                        <span className="text-xs font-mono text-slate-400 uppercase tracking-tighter">{s.course?.course_id ?? s.course_id.substring(0, 8)}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2 text-slate-600">
+                        <Calendar size={14} className="text-slate-400" />
+                        <span className="text-sm font-medium">
+                            {s.class ? `Year ${s.class.year} · Sec ${s.class.section}` : 'N/A'}
+                        </span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-center">
+                    {getStatusBadge(s.status)}
+                  </TableCell>
+                  <TableCell className="text-right px-6">
+                    <div className="flex justify-end gap-2">
+                      {s.status === 'incoming' && (
+                        <Button 
+                            size="sm" 
+                            variant="default"
+                            className="bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg h-8 font-bold px-4"
+                            onClick={() => handleStatusChange(s.id, 'active')}
+                        >
+                          <Play size={14} className="mr-1" /> Start
+                        </Button>
+                      )}
+                      {s.status === 'active' && (
+                        <Button 
+                            size="sm" 
+                            variant="destructive"
+                            className="rounded-lg h-8 font-bold px-4 shadow-lg shadow-rose-200"
+                            onClick={() => handleStatusChange(s.id, 'completed')}
+                        >
+                          <Square size={14} className="mr-1" /> End
+                        </Button>
+                      )}
+                      {(s.status === 'completed' || s.status === 'finished') && (
+                          <span className="text-xs font-bold text-slate-300 uppercase tracking-widest mr-2">Locked</span>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {sessions.length === 0 && (
+                <TableRow>
+                    <TableCell colSpan={5} className="h-48 text-center text-slate-400 font-medium">
+                        No attendance sessions found.
+                    </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   );
 }
