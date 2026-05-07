@@ -159,10 +159,32 @@ pub async fn get_schedule_handler(
 pub async fn get_sessions_by_instructor(
     State(state): State<AppState>,
     InstructorClaims { user_id }: InstructorClaims,
+    Query(params): Query<SessionsQueryParams>,
 ) -> Result<(StatusCode, Json<Vec<Session>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
+    use diesel::ExpressionMethods;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-    let s = sessions::table.filter(sessions::instructor_id.eq(Uuid::parse_str(&user_id).unwrap())).load::<Session>(&mut conn).await.map_err(internal_error)?;
+    let instructor_uuid = Uuid::parse_str(&user_id).unwrap();
+    
+    let mut query = sessions::table.filter(sessions::instructor_id.eq(instructor_uuid)).into_boxed();
+    
+    if let Some(c_id) = params.course_id {
+        query = query.filter(sessions::course_id.eq(c_id));
+    }
+    if let Some(cl_id) = params.class_id {
+        query = query.filter(sessions::class_id.eq(cl_id));
+    }
+    if let Some(date_str) = params.date {
+        // Assuming date_str is "YYYY-MM-DD"
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
+            let start_of_day = date.and_hms_opt(0, 0, 0).unwrap().and_local_timezone(chrono::Utc).unwrap();
+            let end_of_day = date.and_hms_opt(23, 59, 59).unwrap().and_local_timezone(chrono::Utc).unwrap();
+            query = query.filter(sessions::created_at.ge(start_of_day))
+                         .filter(sessions::created_at.le(end_of_day));
+        }
+    }
+
+    let s = query.load::<Session>(&mut conn).await.map_err(internal_error)?;
     Ok((StatusCode::OK, Json(s)))
 }
 

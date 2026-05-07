@@ -310,7 +310,14 @@ export const api = {
   enrichedAssignments: () => request<EnrichedAssignment[]>('/instructor/assignments/enriched'),
 
   // ── Sessions ─────────────────────────────────────────────────────────────────
-  instructorSessions: () => request<Session[]>('/sessions/instructor'),
+  instructorSessions: (filters?: { course_id?: string; class_id?: string; date?: string }) => {
+    const params = new URLSearchParams();
+    if (filters?.course_id) params.append('course_id', filters.course_id);
+    if (filters?.class_id) params.append('class_id', filters.class_id);
+    if (filters?.date) params.append('date', filters.date);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return request<Session[]>(`/sessions/instructor${qs}`);
+  },
   allSessions: () => request<Session[]>('/session'),
   studentSessionsFull: () => request<Session[]>('/student/sessions'),
 

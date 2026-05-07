@@ -280,3 +280,10 @@ pub struct PermissionsQueryParams {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
+
+#[derive(Deserialize, Default)]
+pub struct SessionsQueryParams {
+    pub course_id: Option<Uuid>,
+    pub class_id: Option<Uuid>,
+    pub date: Option<String>, // ISO 8601 date string e.g., "2025-10-24"
+}

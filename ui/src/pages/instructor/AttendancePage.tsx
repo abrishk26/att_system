@@ -12,7 +12,7 @@ import {
     CalendarDays,
     BookOpen
 } from 'lucide-react';
-import { api, type PermissionWithStudent } from '../../api';
+import { api, type PermissionWithStudent, type Session, type AttendanceRecordWithStudent, type Course, type Class, type Assignment } from '../../api';
 import { useAuth } from '../../AuthContext';
 
 // Shadcn UI Imports
@@ -39,46 +39,14 @@ import { Separator } from "@/components/ui/separator"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
-interface Session {
-    id: string;
-    class_id: string;
-    course_id: string;
-    instructor_id: string;
-    status: 'incoming' | 'ongoing' | 'completed';
-    created_at: string;
-}
-
-interface AttendanceRecord {
-    id: string;
-    student_id: string;
-    session_id: string;
-    status: 'present' | 'absent' | 'excused' | 'late';
-    student_name?: string;
-}
-
-interface Course {
-    id: string;
-    name: string;
-}
-
-interface ClassDetail {
-    id: string;
-    year: number;
-    section: number;
-}
-
-interface Assignment {
-    id: string;
-    instructor_id: string;
-    class_id: string;
-    course_id: string;
-}
+// Local types if needed, otherwise use imported ones
+interface ClassDetail extends Class {}
 
 export default function AttendancePage() {
     const { user } = useAuth();
     const [sessions, setSessions] = useState<Session[]>([]);
     const [selectedSession, setSelectedSession] = useState<Session | null>(null);
-    const [records, setRecords] = useState<AttendanceRecord[]>([]);
+    const [records, setRecords] = useState<AttendanceRecordWithStudent[]>([]);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
 
@@ -91,21 +59,19 @@ export default function AttendancePage() {
     const [showNewForm, setShowNewForm] = useState(false);
     const [viewingPermission, setViewingPermission] = useState<PermissionWithStudent | null>(null);
 
+    // Filter State
+    const [filters, setFilters] = useState<{ course_id?: string; class_id?: string; date?: string }>({});
+
     useEffect(() => {
         fetchInitialData();
     }, []);
 
     const fetchInitialData = async () => {
         try {
-            const [sessionsData, assignmentsData] = await Promise.all([
-                api.request<Session[]>('/sessions/instructor'),
-                api.request<Assignment[]>('/instructor/assignments'),
-            ]);
-
-            setSessions(sessionsData.sort((a: Session, b: Session) =>
-                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-            ));
+            const assignmentsData = await api.instructorAssignments();
             setAssignments(assignmentsData);
+            
+            await fetchSessions();
 
             // Extract courses and classes from assignments
             const uniqueCourseIds = Array.from(new Set(assignmentsData.map((a: Assignment) => a.course_id)));
@@ -131,6 +97,21 @@ export default function AttendancePage() {
             setLoading(false);
         }
     };
+
+    const fetchSessions = async () => {
+        try {
+            const sessionsData = await api.instructorSessions(filters);
+            setSessions(sessionsData.sort((a: Session, b: Session) =>
+                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+            ));
+        } catch (error) {
+            console.error("Failed to fetch sessions:", error);
+        }
+    };
+
+    useEffect(() => {
+        if (!loading) fetchSessions();
+    }, [filters]);
 
     // Filter classes based on selected course
     const availableClasses = newSession.course_id
@@ -173,7 +154,7 @@ export default function AttendancePage() {
         setSelectedSession(session);
         setLoading(true);
         try {
-            const recordsData: AttendanceRecord[] = await api.request(`/record/${session.id}`);
+            const recordsData: AttendanceRecordWithStudent[] = await api.sessionRecords(session.id);
             setRecords(recordsData);
         } catch (error) {
             console.error("Failed to fetch records:", error);
@@ -240,9 +221,70 @@ export default function AttendancePage() {
             {/* Selection/View Layer */}
             {!selectedSession ? (
                 <div className="space-y-6">
+                    {/* Filters Bar */}
+                    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-wrap items-end gap-4">
+                        <div className="space-y-2 flex-1 min-w-[200px]">
+                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Course Filter</Label>
+                            <Select 
+                                value={filters.course_id || "all"} 
+                                onValueChange={(v) => setFilters(prev => ({ ...prev, course_id: v === "all" ? undefined : v, class_id: undefined }))}
+                            >
+                                <SelectTrigger className="h-11 rounded-xl border-slate-100 bg-slate-50 font-bold px-4">
+                                    <SelectValue placeholder="All Courses" />
+                                </SelectTrigger>
+                                <SelectContent className="rounded-xl border-slate-100">
+                                    <SelectItem value="all">All Courses</SelectItem>
+                                    {courses.map(course => (
+                                        <SelectItem key={course.id} value={course.id}>{course.name}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div className="space-y-2 flex-1 min-w-[200px]">
+                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Class Filter</Label>
+                            <Select 
+                                value={filters.class_id || "all"} 
+                                disabled={!filters.course_id}
+                                onValueChange={(v) => setFilters(prev => ({ ...prev, class_id: v === "all" ? undefined : v }))}
+                            >
+                                <SelectTrigger className="h-11 rounded-xl border-slate-100 bg-slate-50 font-bold px-4">
+                                    <SelectValue placeholder={!filters.course_id ? "Select course first" : "All Classes"} />
+                                </SelectTrigger>
+                                <SelectContent className="rounded-xl border-slate-100">
+                                    <SelectItem value="all">All Classes</SelectItem>
+                                    {classes
+                                        .filter(cls => assignments.some(a => a.course_id === filters.course_id && a.class_id === cls.id))
+                                        .map(cls => (
+                                            <SelectItem key={cls.id} value={cls.id}>Year {cls.year} - Section {cls.section}</SelectItem>
+                                        ))
+                                    }
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        <div className="space-y-2 flex-1 min-w-[150px]">
+                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Date Filter</Label>
+                            <Input 
+                                type="date" 
+                                value={filters.date || ""} 
+                                onChange={(e) => setFilters(prev => ({ ...prev, date: e.target.value || undefined }))}
+                                className="h-11 rounded-xl border-slate-100 bg-slate-50 font-bold px-4"
+                            />
+                        </div>
+
+                        <Button 
+                            variant="ghost" 
+                            onClick={() => setFilters({})}
+                            className="h-11 px-6 rounded-xl text-slate-400 hover:text-slate-600 font-bold"
+                        >
+                            Clear
+                        </Button>
+                    </div>
+
                     <div className="flex items-center justify-between">
                         <div className="px-3 py-1 bg-slate-100 rounded-full text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                            {sessions.length} total sessions
+                            {sessions.length} sessions found
                         </div>
                     </div>
 
