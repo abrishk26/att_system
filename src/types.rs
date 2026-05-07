@@ -1,6 +1,6 @@
 use diesel_async::pooled_connection::bb8;
 use serde::{Deserialize, Serialize};
-use axum::{extract::FromRequestParts, Json, http::{request::Parts, StatusCode}} ;
+use axum::{extract::FromRequestParts, Json, http::{request::Parts, StatusCode}};
 use jwt_simple::prelude::*;
 
 pub type Pool = bb8::Pool<diesel_async::AsyncPgConnection>;
@@ -47,6 +47,14 @@ pub struct CustomClaims {
 pub struct AppState {
     pub client: reqwest::Client,
     pub pool: Pool,
+    /// JWT HMAC key bytes — stored here so logout/refresh can share it
+    pub jwt_secret: Vec<u8>,
+}
+
+impl AppState {
+    pub fn jwt_key(&self) -> HS256Key {
+        HS256Key::from_bytes(&self.jwt_secret)
+    }
 }
 
 pub struct ClaimsExtractor {
@@ -124,7 +132,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let claims = ClaimsExtractor::from_request_parts(parts, state).await?;
-        
+
         let role_lower = claims.role.to_lowercase();
         if role_lower != "instructor" && role_lower != "admin" {
             log::warn!("Instructor access denied: user_id={}, role={}", claims.user_id, claims.role);
@@ -152,7 +160,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let claims = ClaimsExtractor::from_request_parts(parts, state).await?;
-        
+
         let role_lower = claims.role.to_lowercase();
         if role_lower != "student" && role_lower != "admin" {
             log::warn!("Student access denied: user_id={}, role={}", claims.user_id, claims.role);

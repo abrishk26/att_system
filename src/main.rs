@@ -22,7 +22,8 @@ async fn main() {
     let config = AsyncDieselConnectionManager::<diesel_async::AsyncPgConnection>::new(db_url);
     let pool = bb8::Pool::builder().build(config).await.unwrap();
     let client = ClientBuilder::new().build().unwrap();
-    let app_state = AppState { client, pool };
+    let jwt_secret = b"raw_llkey_hastobeverylongtobestrongbuttheymakeitatruntime".to_vec();
+    let app_state = AppState { client, pool, jwt_secret };
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3001")
         .await

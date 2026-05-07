@@ -39,6 +39,37 @@ export interface Assignment {
   instructor_id: string;
   class_id: string;
   course_id: string;
+  day?: string;
+  start_time?: string;
+  end_time?: string;
+  room?: string;
+}
+
+export interface EnrichedAssignment {
+  id: string;
+  instructor_id: string;
+  class_id: string;
+  course_id: string;
+  course_name: string;
+  course_code: string;
+  class_year: number;
+  class_section: number;
+  day?: string;
+  start_time?: string;
+  end_time?: string;
+  room?: string;
+}
+
+export interface ScheduleItem {
+  course_id: string;
+  class_id: string;
+  course_name: string;
+  class_year: string;
+  class_section: string;
+  day_of_week?: string;
+  start_time?: string;
+  end_time?: string;
+  room?: string;
 }
 
 export interface Session {
@@ -47,6 +78,7 @@ export interface Session {
   class_id: string;
   course_id: string;
   status: string;
+  created_at: string; // ISO 8601 UTC — B-01
 }
 
 export interface AttendanceRecord {
@@ -54,6 +86,7 @@ export interface AttendanceRecord {
   student_id: string;
   session_id: string;
   status: string;
+  client_id?: string;
 }
 
 export interface AttendanceRecordWithStudent extends AttendanceRecord {
@@ -68,10 +101,44 @@ export interface Permission {
   description: string;
   img_url?: string;
   status: string;
+  created_at: string; // ISO 8601 UTC — B-09
 }
 
 export interface PermissionWithStudent extends Permission {
-  student_name: string;
+  student_name: string; // B-10
+}
+
+// B-05 batch update
+export interface BatchUpdateItem {
+  nfc_id: string;
+  status: 'present' | 'absent' | 'late' | 'excused';
+}
+
+export interface BatchUpdateRequest {
+  session_id: string;
+  updates: BatchUpdateItem[];
+}
+
+// B-11 offline sync
+export interface OfflineSyncRecord {
+  client_id: string;
+  nfc_id: string;
+  session_id: string;
+  status: string;
+  client_timestamp?: string;
+}
+
+export interface OfflineSyncDetail {
+  client_id: string;
+  result: 'success' | 'skipped' | 'failed';
+  reason?: string;
+}
+
+export interface OfflineSyncResponse {
+  processed: number;
+  skipped: number;
+  failed: number;
+  details: OfflineSyncDetail[];
 }
 
 export interface DashboardStats {
@@ -104,22 +171,21 @@ export interface CoursePerformance {
   sessions: number;
 }
 
-
 export interface InstructorDashboardMetrics {
-    stats: {
-        active_courses: number;
-        total_sessions: number;
-        avg_attendance: number;
-        total_students: number;
-    };
-    trends: Array<{ date: string; rate: number }>;
-    course_performance: Array<{ course_id: string; attendance_rate: number }>;
+  stats: {
+    active_courses: number;
+    total_sessions: number;
+    avg_attendance: number;
+    total_students: number;
+  };
+  trends: Array<{ date: string; rate: number }>;
+  course_performance: Array<{ course_id: string; attendance_rate: number }>;
 }
 
 export interface StudentDashboardMetrics {
-    overall_attendance: number;
-    courses_performance: Array<{ course_name: string; percentage: number }>;
-    attendance_trend: Array<{ date: string; status: string }>;
+  overall_attendance: number;
+  courses_performance: Array<{ course_name: string; percentage: number }>;
+  attendance_trend: Array<{ date: string; status: string }>;
 }
 
 let onTokenUpdate: ((token: string | null) => void) | null = null;
@@ -158,12 +224,12 @@ function authHeaders(token?: string, isMultipart = false): HeadersInit {
 
 export async function request<T>(path: string, options?: RequestInit, retry = true): Promise<T> {
   const isMultipart = options?.body instanceof FormData;
-  const res = await fetch(`${BASE_URL}${path}`, { 
-    ...options, 
-    headers: { ...authHeaders(undefined, isMultipart), ...options?.headers } 
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...options,
+    headers: { ...authHeaders(undefined, isMultipart), ...options?.headers }
   });
 
-  if (res.status === 401 && retry && path !== '/login') {
+  if (res.status === 401 && retry && path !== '/login' && path !== '/auth/login/nfc') {
     const newToken = await refreshAccessToken();
     if (newToken) {
       const res2 = await fetch(`${BASE_URL}${path}`, {
@@ -184,8 +250,6 @@ export async function request<T>(path: string, options?: RequestInit, retry = tr
   if (!res.ok) {
     const text = await res.text();
     let message = `${res.status} ${res.statusText}`;
-    
-    // Handle specific error cases with user-friendly messages
     if (res.status === 401) {
       message = 'Invalid username or password. Please try again.';
     } else if (res.status === 405) {
@@ -193,14 +257,13 @@ export async function request<T>(path: string, options?: RequestInit, retry = tr
     } else if (res.status === 500) {
       message = 'Server error. Please try again later.';
     } else {
-      try { 
+      try {
         const errorData = JSON.parse(text);
-        message = errorData.message ?? message; 
-      } catch { 
-        message = text || message; 
+        message = errorData.message ?? message;
+      } catch {
+        message = text || message;
       }
     }
-    
     throw new Error(message);
   }
 
@@ -212,39 +275,44 @@ export const api = {
   setOnTokenUpdate: (cb: (token: string | null) => void) => {
     onTokenUpdate = cb;
   },
+
+  // ── Auth ────────────────────────────────────────────────────────────────────
   login: (username: string, password: string) =>
     request<{ access_token: string; refresh_token: string; role: string }>('/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
 
+  /** B-07: NFC card login */
+  nfcLogin: (nfc_id: string) =>
+    request<{ access_token: string; refresh_token: string; role: string }>('/auth/login/nfc', {
+      method: 'POST',
+      body: JSON.stringify({ nfc_id }),
+    }),
+
+  /** B-03: Server-side token revocation */
+  logout: (refresh_token: string) =>
+    request<{ message: string }>('/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refresh_token }),
+    }),
+
+  // ── Profile ─────────────────────────────────────────────────────────────────
   profile: () => request<UserProfile>('/profile'),
 
+  // ── Schedule ─────────────────────────────────────────────────────────────────
+  /** B-04: timetable for the current user */
+  schedule: () => request<ScheduleItem[]>('/schedule'),
+
+  // ── Instructor assignments ───────────────────────────────────────────────────
   instructorAssignments: () => request<Assignment[]>('/instructor/assignments'),
+  /** B-08: enriched assignments (course name + class info) */
+  enrichedAssignments: () => request<EnrichedAssignment[]>('/instructor/assignments/enriched'),
 
+  // ── Sessions ─────────────────────────────────────────────────────────────────
   instructorSessions: () => request<Session[]>('/sessions/instructor'),
-
   allSessions: () => request<Session[]>('/session'),
   studentSessionsFull: () => request<Session[]>('/student/sessions'),
-
-  courseDetails: (id: string) => request<Course>(`/course/${id}`),
-
-  classDetails: (id: string) => request<Class>(`/class/${id}`),
-
-  sessionRecords: (sessionId: string) =>
-    request<AttendanceRecordWithStudent[]>(`/record/${sessionId}`),
-
-  allPermissions: () =>
-    request<PermissionWithStudent[]>('/instructor/permissions'),
-
-  permissionsBySession: (sessionId: string) =>
-    request<PermissionWithStudent[]>(`/instructor/permissions/${sessionId}`),
-
-  updatePermission: (id: string, status: string) =>
-    request(`/instructor/permissions/update/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status }),
-    }),
 
   createSession: (body: { instructor_id: string; class_id: string; course_id: string }) =>
     request<Session>('/session/create', { method: 'POST', body: JSON.stringify(body) }),
@@ -255,77 +323,100 @@ export const api = {
       body: JSON.stringify({ session_id, status }),
     }),
 
-  // Student Endpoints
-  studentCourses: () => request<Course[]>('/student/courses'),
-  
-  studentSessions: () => request<AttendanceRecord[]>('/sessions/student'),
-  
+  // ── Attendance records ───────────────────────────────────────────────────────
+  sessionRecords: (sessionId: string) =>
+    request<AttendanceRecordWithStudent[]>(`/record/${sessionId}`),
+
+  markAttendance: (nfc_id: string, session_id: string, status: string) =>
+    request<AttendanceRecord>('/record/update', {
+      method: 'PATCH',
+      body: JSON.stringify({ nfc_id, session_id, status }),
+    }),
+
+  /** B-05: batch attendance update */
+  batchUpdateAttendance: (body: BatchUpdateRequest) =>
+    request<AttendanceRecordWithStudent[]>('/record/batch-update', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  /** B-11: idempotent offline sync */
+  offlineSync: (records: OfflineSyncRecord[]) =>
+    request<OfflineSyncResponse>('/record/offline-sync', {
+      method: 'POST',
+      body: JSON.stringify({ records }),
+    }),
+
+  // ── Permissions ──────────────────────────────────────────────────────────────
+  /** B-02: global permission inbox with optional status filter */
+  allPermissions: (status?: string) => {
+    const qs = status ? `?status=${status}` : '';
+    return request<PermissionWithStudent[]>(`/instructor/permissions${qs}`);
+  },
+
+  permissionsBySession: (sessionId: string) =>
+    request<PermissionWithStudent[]>(`/instructor/permissions/${sessionId}`),
+
+  updatePermission: (id: string, status: string) =>
+    request(`/instructor/permissions/update/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
+
   studentPermissions: () => request<Permission[]>('/student/permissions'),
-  
-  createPermission: (formData: FormData) => 
+
+  createPermission: (formData: FormData) =>
     request<Permission>('/student/permissions', {
       method: 'POST',
       body: formData,
     }),
 
+  // ── Course / Class ───────────────────────────────────────────────────────────
+  courseDetails: (id: string) => request<Course>(`/course/${id}`),
+  classDetails: (id: string) => request<Class>(`/class/${id}`),
+
+  // ── Instructor helpers ───────────────────────────────────────────────────────
   studentCount: (courseId: string, classId: string) =>
     request<number>(`/instructor/student-count?course_id=${courseId}&class_id=${classId}`),
 
-  attendanceStats: () =>
-    request<number>('/instructor/attendance-stats'),
+  attendanceStats: () => request<number>('/instructor/attendance-stats'),
 
   instructorStudents: (courseId: string, classId: string) =>
     request<StudentProfile[]>(`/instructor/students?course_id=${courseId}&class_id=${classId}`),
 
-  instructorDashboardMetrics: () => request<InstructorDashboardMetrics>('/instructor/dashboard-metrics'),
-  
+  instructorDashboardMetrics: () =>
+    request<InstructorDashboardMetrics>('/instructor/dashboard-metrics'),
+
+  // ── Student helpers ──────────────────────────────────────────────────────────
+  studentCourses: () => request<Course[]>('/student/courses'),
+  studentSessions: () => request<AttendanceRecord[]>('/sessions/student'),
   studentDashboardMetrics: () => request<StudentDashboardMetrics>('/student/dashboard-metrics'),
 };
 
-// Helper function to fetch and calculate dashboard data from backend
+// Helper function for dashboard data
 export async function fetchDashboardData(_user: UserProfile) {
   const sessions = await api.allSessions();
-  
   const completedSessions = sessions.filter(s => s.status === 'completed' || s.status === 'finished');
   const activeSessions = sessions.filter(s => s.status === 'active');
-  
-  // Get unique course IDs
   const uniqueCourseIds = Array.from(new Set(sessions.map(s => s.course_id)));
-  
-  // Fetch attendance records for completed sessions (limit to recent ones for performance)
   const recentCompleted = completedSessions.slice(0, 20);
-  const recordsPromises = recentCompleted.map(s => 
+  const recordsPromises = recentCompleted.map(s =>
     api.sessionRecords(s.id).catch(() => [] as AttendanceRecordWithStudent[])
   );
   const allRecords = await Promise.all(recordsPromises);
-  
-  // Calculate stats
-  let totalPresent = 0;
-  let totalRecords = 0;
-  
+  let totalPresent = 0; let totalRecords = 0;
   allRecords.forEach(records => {
     totalRecords += records.length;
     totalPresent += records.filter(r => r.status === 'present').length;
   });
-  
   const avgAttendance = totalRecords > 0 ? Math.round((totalPresent / totalRecords) * 100) : 0;
-  const completionRate = sessions.length > 0 
-    ? Math.round((completedSessions.length / sessions.length) * 100) 
-    : 0;
-  
-  // Stats
+  const completionRate = sessions.length > 0 ? Math.round((completedSessions.length / sessions.length) * 100) : 0;
   const stats: DashboardStats = {
-    totalSessions: sessions.length,
-    activeSessions: activeSessions.length,
-    completedSessions: completedSessions.length,
-    totalCourses: uniqueCourseIds.length,
-    presentToday: totalPresent,
-    absentToday: totalRecords - totalPresent,
-    avgAttendance,
-    completionRate,
+    totalSessions: sessions.length, activeSessions: activeSessions.length,
+    completedSessions: completedSessions.length, totalCourses: uniqueCourseIds.length,
+    presentToday: totalPresent, absentToday: totalRecords - totalPresent,
+    avgAttendance, completionRate,
   };
-  
-  // Trends (last 7 days mock - would need timestamp in backend)
   const trends: AttendanceTrend[] = [
     { day: 'Mon', actual: avgAttendance - 5, target: 85 },
     { day: 'Tue', actual: avgAttendance - 3, target: 85 },
@@ -335,8 +426,6 @@ export async function fetchDashboardData(_user: UserProfile) {
     { day: 'Sat', actual: avgAttendance + 1, target: 85 },
     { day: 'Sun', actual: avgAttendance, target: 85 },
   ];
-  
-  // Distribution
   const sessionAttendanceRates = await Promise.all(
     recentCompleted.map(async (s) => {
       const records = await api.sessionRecords(s.id).catch(() => []);
@@ -344,41 +433,24 @@ export async function fetchDashboardData(_user: UserProfile) {
       return records.length > 0 ? (present / records.length) * 100 : 0;
     })
   );
-  
   const distribution: AttendanceDistribution = {
     excellent: sessionAttendanceRates.filter(r => r >= 90).length,
     good: sessionAttendanceRates.filter(r => r >= 80 && r < 90).length,
     fair: sessionAttendanceRates.filter(r => r >= 70 && r < 80).length,
     poor: sessionAttendanceRates.filter(r => r < 70).length,
   };
-  
-  // Course performance
   const courseMap = new Map<string, { present: number; total: number; sessions: number }>();
-  
   for (let i = 0; i < recentCompleted.length; i++) {
-    const session = recentCompleted[i];
-    const records = allRecords[i];
-    
-    if (!courseMap.has(session.course_id)) {
-      courseMap.set(session.course_id, { present: 0, total: 0, sessions: 0 });
-    }
-    
-    const courseData = courseMap.get(session.course_id)!;
-    courseData.present += records.filter(r => r.status === 'present').length;
-    courseData.total += records.length;
-    courseData.sessions += 1;
+    const session = recentCompleted[i]; const records = allRecords[i];
+    if (!courseMap.has(session.course_id)) courseMap.set(session.course_id, { present: 0, total: 0, sessions: 0 });
+    const cd = courseMap.get(session.course_id)!;
+    cd.present += records.filter(r => r.status === 'present').length;
+    cd.total += records.length; cd.sessions += 1;
   }
-  
   const performancePromises = Array.from(courseMap.entries()).map(async ([courseId, data]) => {
     const course = await api.courseDetails(courseId).catch(() => null);
-    return {
-      course: course?.course_id || courseId.slice(0, 8),
-      attendance: data.total > 0 ? Math.round((data.present / data.total) * 100) : 0,
-      sessions: data.sessions,
-    };
+    return { course: course?.course_id || courseId.slice(0, 8), attendance: data.total > 0 ? Math.round((data.present / data.total) * 100) : 0, sessions: data.sessions };
   });
-  
   const performance = await Promise.all(performancePromises);
-  
   return { stats, trends, distribution, performance };
 }

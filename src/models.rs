@@ -1,7 +1,9 @@
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use chrono::{DateTime, Utc};
 
+// ── DB Models ─────────────────────────────────────────────────────────────────
 
 #[derive(Queryable, Selectable, Insertable, Serialize, Deserialize, Debug, Clone)]
 #[diesel(table_name = crate::schema::permissions)]
@@ -13,6 +15,7 @@ pub struct Permission {
     pub description: String,
     pub img_url: Option<String>,
     pub status: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Queryable, Selectable, Insertable, Serialize, Deserialize, Debug, Clone)]
@@ -24,6 +27,7 @@ pub struct Session {
     pub class_id: Uuid,
     pub course_id: Uuid,
     pub status: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Queryable, Selectable, Insertable, Serialize, Deserialize, Debug, Clone)]
@@ -34,7 +38,19 @@ pub struct AttendanceRecord {
     pub student_id: Uuid,
     pub session_id: Uuid,
     pub status: String,
+    pub client_id: Option<Uuid>,
 }
+
+#[derive(Queryable, Selectable, Insertable, Serialize, Deserialize, Debug, Clone)]
+#[diesel(table_name = crate::schema::token_denylist)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct TokenDenylist {
+    pub jti: String,
+    pub revoked_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+// ── Enriched response types ───────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AttendanceRecordWithStudent {
@@ -45,6 +61,20 @@ pub struct AttendanceRecordWithStudent {
     pub student_name: String,
     pub nfc_id: String,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PermissionWithStudent {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    pub student_id: Uuid,
+    pub student_name: String,
+    pub description: String,
+    pub img_url: Option<String>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+}
+
+// ── Request structs ───────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub struct CreateSessionRequest {
@@ -71,6 +101,72 @@ pub struct UpdateRecordRequest {
     pub status: String,
 }
 
+#[derive(Deserialize)]
+pub struct BatchUpdateItem {
+    pub nfc_id: String,
+    pub status: String,
+}
+
+#[derive(Deserialize)]
+pub struct BatchUpdateRequest {
+    pub session_id: Uuid,
+    pub updates: Vec<BatchUpdateItem>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BatchUpdateResult {
+    pub nfc_id: String,
+    pub result: String,
+    pub reason: Option<String>,
+    pub record: Option<AttendanceRecordWithStudent>,
+}
+
+#[derive(Deserialize)]
+pub struct OfflineSyncRecord {
+    pub client_id: Uuid,
+    pub nfc_id: String,
+    pub session_id: Uuid,
+    pub status: String,
+    pub client_timestamp: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct OfflineSyncRequest {
+    pub records: Vec<OfflineSyncRecord>,
+}
+
+#[derive(Serialize)]
+pub struct OfflineSyncDetail {
+    pub client_id: Uuid,
+    pub result: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct OfflineSyncResponse {
+    pub processed: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub details: Vec<OfflineSyncDetail>,
+}
+
+#[derive(Deserialize)]
+pub struct UpdatePermissionStatusRequest {
+    pub status: String,
+}
+
+#[derive(Deserialize)]
+pub struct LogoutRequest {
+    pub refresh_token: String,
+}
+
+#[derive(Deserialize)]
+pub struct NfcLoginRequest {
+    pub nfc_id: String,
+}
+
+// ── Cross-service DTOs (from data_source) ─────────────────────────────────────
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Course {
     pub id: Uuid,
@@ -91,6 +187,39 @@ pub struct Assignment {
     pub instructor_id: Uuid,
     pub class_id: Uuid,
     pub course_id: Uuid,
+    pub day: Option<String>,
+    pub start_time: Option<String>,
+    pub end_time: Option<String>,
+    pub room: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct EnrichedAssignment {
+    pub id: Uuid,
+    pub instructor_id: Uuid,
+    pub class_id: Uuid,
+    pub course_id: Uuid,
+    pub course_name: String,
+    pub course_code: String,
+    pub class_year: i32,
+    pub class_section: i32,
+    pub day: Option<String>,
+    pub start_time: Option<String>,
+    pub end_time: Option<String>,
+    pub room: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ScheduleItem {
+    pub course_id: Uuid,
+    pub class_id: Uuid,
+    pub course_name: String,
+    pub class_year: String,
+    pub class_section: String,
+    pub day_of_week: Option<String>,
+    pub start_time: Option<String>,
+    pub end_time: Option<String>,
+    pub room: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -105,12 +234,8 @@ pub struct UserProfile {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PermissionWithStudent {
+pub struct PermissionWithStudentMinimal {
     pub id: Uuid,
-    pub session_id: Uuid,
-    pub student_id: Uuid,
-    pub student_name: String,
-    pub description: String,
     pub img_url: Option<String>,
     pub status: String,
 }
@@ -126,10 +251,7 @@ pub struct StudentProfile {
     pub attendance_percentage: Option<f64>,
 }
 
-#[derive(Deserialize)]
-pub struct UpdatePermissionStatusRequest {
-    pub status: String,
-}
+// ── Dashboard types ───────────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CoursePerformance {
@@ -148,4 +270,13 @@ pub struct StudentDashboardMetrics {
     pub overall_attendance: f64,
     pub courses_performance: Vec<CoursePerformance>,
     pub attendance_trend: Vec<AttendanceTrend>,
+}
+
+// ── Permissions filter query params ──────────────────────────────────────────
+
+#[derive(Deserialize, Default)]
+pub struct PermissionsQueryParams {
+    pub status: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }

@@ -1,13 +1,20 @@
 use uuid::Uuid;
-use diesel::{BoolExpressionMethods, ExpressionMethods, QueryDsl, JoinOnDsl};
-use axum::{extract::{State, Path, Multipart}, http::{StatusCode, Method}, Json};
+use diesel::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
+use axum::{extract::{State, Path, Multipart, Query}, http::{StatusCode, Method}, Json};
 use crate::types::*;
-use crate::schema::attendance_record;
+use crate::schema::{attendance_record, sessions};
 use crate::helpers::internal_error;
-use crate::models::{
-    AttendanceRecordWithStudent, AttendanceRecord, Course,
-    UpdateRecordRequest, Permission, StudentProfile,
-};
+use crate::models::*;
+
+const VALID_STATUSES: &[&str] = &["present", "absent", "late", "excused"];
+
+fn validate_status(s: &str) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    if VALID_STATUSES.contains(&s) { Ok(()) } else {
+        Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+            message: format!("Invalid status value '{}'. Must be one of: present, absent, late, excused", s),
+        })))
+    }
+}
 
 pub async fn get_sessions_by_student(
     State(state): State<AppState>,
@@ -15,234 +22,196 @@ pub async fn get_sessions_by_student(
 ) -> Result<(StatusCode, Json<Vec<AttendanceRecord>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
     let records = attendance_record::table
         .filter(attendance_record::student_id.eq(Uuid::parse_str(&user_id).unwrap()))
-        .load::<AttendanceRecord>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
+        .load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
     Ok((StatusCode::OK, Json(records)))
 }
-
 
 pub async fn get_student_courses(
     State(state): State<AppState>,
     ClaimsExtractor { user_id, .. }: ClaimsExtractor,
 ) -> Result<(StatusCode, Json<Vec<Course>>), (StatusCode, Json<ErrorResponse>)> {
-    let response = state
-        .client
-        .request(
-            Method::GET,
-            format!("http://127.0.0.1:3000/student/courses/{}", user_id),
-        )
-        .send()
-        .await
-        .map_err(internal_error)?;
-
-    if response.status() != StatusCode::OK {
-        return Err((
-            response.status(),
-            Json(ErrorResponse {
-                message: "failed to fetch student courses".to_string(),
-            }),
-        ));
-    }
-
-    let courses = response.json::<Vec<Course>>().await.map_err(internal_error)?;
-    Ok((StatusCode::OK, Json(courses)))
+    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/courses/{}", user_id)).send().await.map_err(internal_error)?;
+    if r.status() != StatusCode::OK { return Err((r.status(), Json(ErrorResponse { message: "failed to fetch student courses".into() }))); }
+    Ok((StatusCode::OK, Json(r.json::<Vec<Course>>().await.map_err(internal_error)?)))
 }
-
 
 pub async fn get_records_with_student_info(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
     _: ClaimsExtractor,
-) -> Result<(StatusCode, Json<Vec<AttendanceRecordWithStudent>>), (StatusCode, Json<ErrorResponse>)>
-{
+) -> Result<(StatusCode, Json<Vec<AttendanceRecordWithStudent>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    let records = attendance_record::table
-        .filter(attendance_record::session_id.eq(session_id))
-        .load::<AttendanceRecord>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    let mut enriched_records = Vec::new();
+    let records = attendance_record::table.filter(attendance_record::session_id.eq(session_id)).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
+    let mut enriched = Vec::new();
     for record in records {
-        let response = state
-            .client
-            .request(
-                Method::GET,
-                format!("http://127.0.0.1:3000/student/profile?id={}", record.student_id),
-            )
-            .send()
-            .await
-            .map_err(internal_error)?;
-
-        if response.status() == StatusCode::OK {
-            if let Ok(student_profile) = response.json::<StudentProfile>().await {
-                enriched_records.push(AttendanceRecordWithStudent {
-                    id: record.id,
-                    student_id: record.student_id,
-                    session_id: record.session_id,
-                    status: record.status,
-                    student_name: format!("{} {}", student_profile.first_name, student_profile.last_name.unwrap_or_default()),
-                    nfc_id: student_profile.nfc_id,
+        let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?id={}", record.student_id)).send().await.map_err(internal_error)?;
+        if r.status() == StatusCode::OK {
+            if let Ok(sp) = r.json::<StudentProfile>().await {
+                enriched.push(AttendanceRecordWithStudent {
+                    id: record.id, student_id: record.student_id, session_id: record.session_id,
+                    status: record.status, student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()), nfc_id: sp.nfc_id,
                 });
             }
         }
     }
-
-    Ok((StatusCode::OK, Json(enriched_records)))
+    Ok((StatusCode::OK, Json(enriched)))
 }
 
-
+/// PATCH /record/update — B-06: validates status before update
 pub async fn mark_attendance_handler(
     State(state): State<AppState>,
     _: ClaimsExtractor,
     Json(payload): Json<UpdateRecordRequest>,
 ) -> Result<(StatusCode, Json<AttendanceRecord>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
+    validate_status(&payload.status)?;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    let response = state
-        .client
-        .request(
-            Method::GET,
-            format!("http://127.0.0.1:3000/student/profile?nfc_id={}", payload.nfc_id),
-        )
-        .send()
-        .await
-        .map_err(internal_error)?;
-
-    if response.status() != StatusCode::OK {
-        log::error!("failed to resolve student from nfc_id {}", payload.nfc_id);
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                message: "student not found".to_string(),
-            }),
-        ));
+    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", payload.nfc_id)).send().await.map_err(internal_error)?;
+    if r.status() != StatusCode::OK {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { message: "student not found".into() })));
     }
-
-    let student_profile = response.json::<StudentProfile>().await.map_err(internal_error)?;
-    let student_id = student_profile.id;
-
+    let sp = r.json::<StudentProfile>().await.map_err(internal_error)?;
     let record = diesel::update(attendance_record::table)
-        .filter(
-            attendance_record::session_id
-                .eq(payload.session_id)
-                .and(attendance_record::student_id.eq(student_id)),
-        )
-        .set(attendance_record::status.eq(payload.status))
-        .get_result::<AttendanceRecord>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
+        .filter(attendance_record::session_id.eq(payload.session_id).and(attendance_record::student_id.eq(sp.id)))
+        .set(attendance_record::status.eq(&payload.status))
+        .get_result::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
     Ok((StatusCode::OK, Json(record)))
+}
+
+/// PATCH /record/batch-update — B-05
+pub async fn batch_update_attendance_handler(
+    State(state): State<AppState>,
+    _: ClaimsExtractor,
+    Json(payload): Json<BatchUpdateRequest>,
+) -> Result<(StatusCode, Json<Vec<AttendanceRecordWithStudent>>), (StatusCode, Json<ErrorResponse>)> {
+    use diesel_async::RunQueryDsl;
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
+    let mut results: Vec<AttendanceRecordWithStudent> = Vec::new();
+
+    for item in &payload.updates {
+        if validate_status(&item.status).is_err() { continue; }
+        let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", item.nfc_id)).send().await.map_err(internal_error)?;
+        if r.status() != StatusCode::OK { continue; }
+        let sp = match r.json::<StudentProfile>().await { Ok(s) => s, Err(_) => continue };
+        let updated = diesel::update(attendance_record::table)
+            .filter(attendance_record::session_id.eq(payload.session_id).and(attendance_record::student_id.eq(sp.id)))
+            .set(attendance_record::status.eq(&item.status))
+            .get_result::<AttendanceRecord>(&mut conn).await;
+        if let Ok(rec) = updated {
+            results.push(AttendanceRecordWithStudent {
+                id: rec.id, student_id: rec.student_id, session_id: rec.session_id,
+                status: rec.status, student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()), nfc_id: sp.nfc_id.clone(),
+            });
+        }
+    }
+    Ok((StatusCode::OK, Json(results)))
+}
+
+/// POST /record/offline-sync — B-11: idempotent batch NFC replay
+pub async fn offline_sync_handler(
+    State(state): State<AppState>,
+    _: ClaimsExtractor,
+    Json(payload): Json<OfflineSyncRequest>,
+) -> Result<(StatusCode, Json<OfflineSyncResponse>), (StatusCode, Json<ErrorResponse>)> {
+    use diesel_async::RunQueryDsl;
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
+    let mut processed = 0usize; let mut skipped = 0usize; let mut failed = 0usize;
+    let mut details: Vec<OfflineSyncDetail> = Vec::new();
+
+    for rec in &payload.records {
+        // Check deduplication by client_id
+        let existing: i64 = attendance_record::table
+            .filter(attendance_record::client_id.eq(rec.client_id))
+            .count()
+            .get_result(&mut conn).await.unwrap_or(0);
+        if existing > 0 {
+            skipped += 1;
+            details.push(OfflineSyncDetail { client_id: rec.client_id, result: "skipped".into(), reason: Some("already synced".into()) });
+            continue;
+        }
+        if validate_status(&rec.status).is_err() {
+            failed += 1;
+            details.push(OfflineSyncDetail { client_id: rec.client_id, result: "failed".into(), reason: Some(format!("invalid status '{}'", rec.status)) });
+            continue;
+        }
+        let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", rec.nfc_id)).send().await.map_err(internal_error)?;
+        if r.status() != StatusCode::OK {
+            failed += 1;
+            details.push(OfflineSyncDetail { client_id: rec.client_id, result: "failed".into(), reason: Some("student not found".into()) });
+            continue;
+        }
+        let sp = match r.json::<StudentProfile>().await { Ok(s) => s, Err(_) => { failed += 1; details.push(OfflineSyncDetail { client_id: rec.client_id, result: "failed".into(), reason: Some("parse error".into()) }); continue; } };
+        let update_result = diesel::update(attendance_record::table)
+            .filter(attendance_record::session_id.eq(rec.session_id).and(attendance_record::student_id.eq(sp.id)))
+            .set((attendance_record::status.eq(&rec.status), attendance_record::client_id.eq(Some(rec.client_id))))
+            .execute(&mut conn).await;
+        match update_result {
+            Ok(_) => { processed += 1; details.push(OfflineSyncDetail { client_id: rec.client_id, result: "success".into(), reason: None }); }
+            Err(e) => { failed += 1; details.push(OfflineSyncDetail { client_id: rec.client_id, result: "failed".into(), reason: Some(e.to_string()) }); }
+        }
+    }
+    Ok((StatusCode::OK, Json(OfflineSyncResponse { processed, skipped, failed, details })))
 }
 
 pub async fn get_student_permissions(
     State(state): State<AppState>,
     ClaimsExtractor { user_id, .. }: ClaimsExtractor,
-) -> Result<(StatusCode, Json<Vec<Permission>>), (StatusCode, Json<ErrorResponse>)> {
+) -> Result<(StatusCode, Json<Vec<crate::models::Permission>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    let permissions = crate::schema::permissions::table
+    let perms = crate::schema::permissions::table
         .filter(crate::schema::permissions::student_id.eq(Uuid::parse_str(&user_id).unwrap()))
-        .load::<Permission>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    Ok((StatusCode::OK, Json(permissions)))
+        .load::<crate::models::Permission>(&mut conn).await.map_err(internal_error)?;
+    Ok((StatusCode::OK, Json(perms)))
 }
 
 pub async fn create_permission_handler(
     State(state): State<AppState>,
     ClaimsExtractor { user_id, .. }: ClaimsExtractor,
     mut multipart: Multipart,
-) -> Result<(StatusCode, Json<Permission>), (StatusCode, Json<ErrorResponse>)> {
+) -> Result<(StatusCode, Json<crate::models::Permission>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
+    use chrono::Utc;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    let mut session_id = None;
-    let mut description = None;
-    let mut img_url = None;
-
+    let mut session_id = None; let mut description = None; let mut img_url = None;
     while let Some(field) = multipart.next_field().await.map_err(internal_error)? {
         let name = field.name().unwrap_or_default().to_string();
-        if name == "session_id" {
-            let data = field.text().await.map_err(internal_error)?;
-            session_id = Some(Uuid::parse_str(&data).map_err(internal_error)?);
-        } else if name == "description" {
-            description = Some(field.text().await.map_err(internal_error)?);
-        } else if name == "file" {
+        if name == "session_id" { let d = field.text().await.map_err(internal_error)?; session_id = Some(Uuid::parse_str(&d).map_err(internal_error)?); }
+        else if name == "description" { description = Some(field.text().await.map_err(internal_error)?); }
+        else if name == "file" {
             let filename = field.file_name().unwrap_or("upload.tmp").to_string();
             let data = field.bytes().await.map_err(internal_error)?;
-            
-            let file_ext = std::path::Path::new(&filename)
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .unwrap_or("bin");
-            
-            let new_filename = format!("{}.{}", Uuid::now_v7(), file_ext);
-            let target_path = format!("uploads/{}", new_filename);
-            
-            tokio::fs::write(&target_path, &data).await.map_err(internal_error)?;
-            img_url = Some(target_path);
+            let ext = std::path::Path::new(&filename).extension().and_then(|e| e.to_str()).unwrap_or("bin");
+            let new_filename = format!("{}.{}", Uuid::now_v7(), ext);
+            let target = format!("uploads/{}", new_filename);
+            tokio::fs::write(&target, &data).await.map_err(internal_error)?;
+            img_url = Some(target);
         }
     }
-
-    let session_id_uuid = session_id.ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "session_id is required".to_string() }))
-    })?;
-    let description_text = description.ok_or_else(|| {
-        (StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "description is required".to_string() }))
-    })?;
-
-    let new_permission = Permission {
-        id: Uuid::now_v7(),
-        session_id: session_id_uuid,
+    let session_id_uuid = session_id.ok_or_else(|| (StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "session_id is required".into() })))?;
+    let desc = description.ok_or_else(|| (StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "description is required".into() })))?;
+    let new_perm = crate::models::Permission {
+        id: Uuid::now_v7(), session_id: session_id_uuid,
         student_id: Uuid::parse_str(&user_id).unwrap(),
-        description: description_text,
-        img_url,
-        status: "pending".to_string(),
+        description: desc, img_url, status: "pending".into(), created_at: Utc::now(),
     };
-
-    diesel::insert_into(crate::schema::permissions::table)
-        .values(&new_permission)
-        .execute(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    Ok((StatusCode::CREATED, Json(new_permission)))
+    diesel::insert_into(crate::schema::permissions::table).values(&new_perm).execute(&mut conn).await.map_err(internal_error)?;
+    Ok((StatusCode::CREATED, Json(new_perm)))
 }
+
 pub async fn get_student_sessions(
     State(state): State<AppState>,
     ClaimsExtractor { user_id, .. }: ClaimsExtractor,
 ) -> Result<(StatusCode, Json<Vec<crate::models::Session>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
-    use crate::schema::{attendance_record, sessions};
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    let records = attendance_record::table
-        .filter(attendance_record::student_id.eq(Uuid::parse_str(&user_id).unwrap()))
-        .load::<AttendanceRecord>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    let session_ids: Vec<Uuid> = records.iter().map(|r| r.session_id).collect();
-
-    let sessions_list = sessions::table
-        .filter(sessions::id.eq_any(session_ids))
-        .load::<crate::models::Session>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    Ok((StatusCode::OK, Json(sessions_list)))
+    let records = attendance_record::table.filter(attendance_record::student_id.eq(Uuid::parse_str(&user_id).unwrap())).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
+    let ids: Vec<Uuid> = records.iter().map(|r| r.session_id).collect();
+    let sess = sessions::table.filter(sessions::id.eq_any(ids)).load::<crate::models::Session>(&mut conn).await.map_err(internal_error)?;
+    Ok((StatusCode::OK, Json(sess)))
 }
 
 pub async fn get_student_dashboard_metrics_handler(
@@ -250,35 +219,15 @@ pub async fn get_student_dashboard_metrics_handler(
     ClaimsExtractor { user_id, .. }: ClaimsExtractor,
 ) -> Result<(StatusCode, Json<crate::models::StudentDashboardMetrics>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
-    use crate::schema::attendance_record;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    let records = attendance_record::table
-        .filter(attendance_record::student_id.eq(Uuid::parse_str(&user_id).unwrap()))
-        .load::<AttendanceRecord>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
+    let records = attendance_record::table.filter(attendance_record::student_id.eq(Uuid::parse_str(&user_id).unwrap())).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
     let total = records.len() as f64;
     let present = records.iter().filter(|r| r.status == "present").count() as f64;
-    let overall_attendance = if total > 0.0 { (present / total) * 100.0 } else { 0.0 };
-
-    let mut attendance_trend = Vec::new();
-    for r in &records {
-        attendance_trend.push(crate::models::AttendanceTrend {
-            date: "2026-05-01".to_string(), // Dummy date to avoid chrono dependency
-            status: r.status.clone(),
-        });
-    }
-
-    let metrics = crate::models::StudentDashboardMetrics {
-        overall_attendance,
-        courses_performance: vec![crate::models::CoursePerformance{
-            course_name: "Enrolled Courses".to_string(),
-            percentage: overall_attendance,
-        }],
-        attendance_trend,
-    };
-
-    Ok((StatusCode::OK, Json(metrics)))
+    let overall = if total > 0.0 { (present / total) * 100.0 } else { 0.0 };
+    let trend = records.iter().map(|r| crate::models::AttendanceTrend { date: "2026-05-01".into(), status: r.status.clone() }).collect();
+    Ok((StatusCode::OK, Json(crate::models::StudentDashboardMetrics {
+        overall_attendance: overall,
+        courses_performance: vec![crate::models::CoursePerformance { course_name: "Enrolled Courses".into(), percentage: overall }],
+        attendance_trend: trend,
+    })))
 }

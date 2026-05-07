@@ -1,17 +1,22 @@
 use crate::types::*;
 use axum::{
-    extract::{State}, http::{StatusCode, Method}, Json
+    extract::State,
+    http::{StatusCode, Method},
+    Json,
 };
 use jwt_simple::prelude::*;
+use crate::models::{LogoutRequest, NfcLoginRequest, TokenDenylist};
+use crate::schema::token_denylist;
 
 pub mod instructors;
 pub mod students;
+
+const JWT_SECRET: &[u8] = b"raw_llkey_hastobeverylongtobestrongbuttheymakeitatruntime";
 
 pub async fn login_handler(
     State(state): State<AppState>,
     Json(payload): Json<LoginData>,
 ) -> Result<(StatusCode, Json<Tokens>), (StatusCode, Json<ErrorResponse>)> {
-    println!("Before request");
     let response = state
         .client
         .request(Method::POST, "http://127.0.0.1:3000/login")
@@ -22,89 +27,43 @@ pub async fn login_handler(
             log::error!("Error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    message: "internal server error".to_string(),
-                }),
+                Json(ErrorResponse { message: "internal server error".to_string() }),
             )
         })?;
 
-    println!("Got response");
-
-    return match response.status() {
+    match response.status() {
         StatusCode::OK => {
             let json = response.json::<UserData>().await.map_err(|e| {
                 log::error!("Error: {}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        message: "internal server error".to_string(),
-                    }),
+                    Json(ErrorResponse { message: "internal server error".to_string() }),
                 )
             })?;
-            let key = HS256Key::from_bytes(
-                "raw_llkey_hastobeverylongtobestrongbuttheymakeitatruntime".as_bytes(),
-            );
-            let claims = Claims::with_custom_claims(
-                CustomClaims { role: json.role.clone() },
-                Duration::from_mins(5)
-            ).with_subject(json.user_id.clone());
-            let access_token = key.authenticate(claims).map_err(|e| {
-                log::error!("Error: {}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        message: "internal server error".to_string(),
-                    }),
-                )
-            })?;
-
-            let claims = Claims::with_custom_claims(
-                CustomClaims { role: json.role.clone() },
-                Duration::from_days(30)
-            ).with_subject(json.user_id.clone());
-            let refresh_token = key.authenticate(claims).map_err(|e| {
-                log::error!("Error: {}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        message: "internal server error".to_string(),
-                    }),
-                )
-            })?;
-
-            println!("Got json");
-
+            let (access_token, refresh_token) = issue_tokens(&json.user_id, &json.role)?;
             log::info!("User logged in: user_id={}, role={}", json.user_id, json.role);
-            Ok((
-                StatusCode::OK,
-                Json(Tokens {
-                    access_token,
-                    refresh_token,
-                    role: json.role.clone(),
-                }),
-            ))
+            Ok((StatusCode::OK, Json(Tokens { access_token, refresh_token, role: json.role })))
         }
         StatusCode::BAD_REQUEST => Err((
             StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                message: "invalid username or password".to_string(),
-            }),
+            Json(ErrorResponse { message: "invalid username or password".to_string() }),
         )),
         _ => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                message: "internal server error".to_string(),
-            }),
+            Json(ErrorResponse { message: "internal server error".to_string() }),
         )),
-    };
+    }
 }
 
 pub async fn refresh_handler(
+    State(state): State<AppState>,
     Json(payload): Json<RefreshRequest>,
 ) -> Result<(StatusCode, Json<Tokens>), (StatusCode, Json<ErrorResponse>)> {
-    let key = HS256Key::from_bytes(
-        "raw_llkey_hastobeverylongtobestrongbuttheymakeitatruntime".as_bytes(),
-    );
+    use diesel_async::RunQueryDsl;
+    use diesel::{ExpressionMethods, QueryDsl};
+    use crate::helpers::internal_error;
+
+    let key = HS256Key::from_bytes(JWT_SECRET);
 
     let claims = key
         .verify_token::<CustomClaims>(&payload.refresh_token, None)
@@ -112,70 +71,174 @@ pub async fn refresh_handler(
             log::error!("Error verifying token: {}", e);
             (
                 StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    message: "invalid refresh token".to_string(),
-                }),
+                Json(ErrorResponse { message: "invalid refresh token".to_string() }),
             )
         })?;
-    
+
+    // Check token denylist
+    let jti = claims.jwt_id.clone().unwrap_or_default();
+    if !jti.is_empty() {
+        let mut conn = state.pool.get().await.map_err(internal_error)?;
+        let denied: bool = token_denylist::table
+            .filter(token_denylist::jti.eq(&jti))
+            .count()
+            .get_result::<i64>(&mut conn)
+            .await
+            .map_err(internal_error)? > 0;
+
+        if denied {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse { message: "token has been revoked".to_string() }),
+            ));
+        }
+    }
+
     let role = claims.custom.role.clone();
+    let user_id = claims.subject.ok_or_else(|| (
+        StatusCode::UNAUTHORIZED,
+        Json(ErrorResponse { message: "invalid token subject".to_string() }),
+    ))?;
 
-    let user_id = claims.subject.ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                message: "invalid token subject".to_string(),
-            }),
-        )
-    })?;
-
-    // Create new access token
-    let claims = Claims::with_custom_claims(
-        CustomClaims { role: role.clone() },
-        Duration::from_mins(5)
-    ).with_subject(user_id.clone());
-    let access_token = key.authenticate(claims).map_err(|e| {
-        log::error!("Error creating access token: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                message: "internal server error".to_string(),
-            }),
-        )
-    })?;
-
-    // Create new refresh token
-    let claims = Claims::with_custom_claims(
-        CustomClaims { role: role.clone() },
-        Duration::from_days(30)
-    ).with_subject(user_id);
-    let refresh_token = key.authenticate(claims).map_err(|e| {
-        log::error!("Error creating refresh token: {}", e);
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                message: "internal server error".to_string(),
-            }),
-        )
-    })?;
-
-    Ok((
-        StatusCode::OK,
-        Json(Tokens {
-            access_token,
-            refresh_token,
-            role: role.clone(),
-        }),
-    ))
+    let (access_token, refresh_token) = issue_tokens(&user_id, &role)?;
+    Ok((StatusCode::OK, Json(Tokens { access_token, refresh_token, role })))
 }
 
+/// POST /logout — revokes the refresh token server-side (B-03)
+pub async fn logout_handler(
+    State(state): State<AppState>,
+    _: ClaimsExtractor,
+    Json(payload): Json<LogoutRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ErrorResponse>)> {
+    use diesel_async::RunQueryDsl;
+    use crate::helpers::internal_error;
+    use chrono::Utc;
+
+    let key = HS256Key::from_bytes(JWT_SECRET);
+
+    let claims = key
+        .verify_token::<CustomClaims>(&payload.refresh_token, None)
+        .map_err(|_| (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { message: "invalid refresh token".to_string() }),
+        ))?;
+
+    let jti = claims.jwt_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+    let expires_at = claims.expires_at
+        .map(|d| Utc::now() + chrono::Duration::seconds(d.as_secs() as i64))
+        .unwrap_or_else(|| Utc::now() + chrono::Duration::days(30));
+
+    let entry = TokenDenylist {
+        jti,
+        revoked_at: Utc::now(),
+        expires_at,
+    };
+
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
+    // INSERT OR IGNORE — idempotent
+    diesel::insert_into(token_denylist::table)
+        .values(&entry)
+        .on_conflict(token_denylist::jti)
+        .do_nothing()
+        .execute(&mut conn)
+        .await
+        .map_err(internal_error)?;
+
+    log::info!("Token revoked: jti={}", entry.jti);
+    Ok((StatusCode::OK, Json(serde_json::json!({ "message": "Logged out successfully" }))))
+}
+
+/// POST /auth/login/nfc — NFC card login (B-07)
+pub async fn nfc_login_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<NfcLoginRequest>,
+) -> Result<(StatusCode, Json<Tokens>), (StatusCode, Json<ErrorResponse>)> {
+    // Look up student by NFC ID from data_source
+    let response = state
+        .client
+        .request(
+            Method::GET,
+            format!("http://127.0.0.1:3000/student/profile?nfc_id={}", payload.nfc_id),
+        )
+        .send()
+        .await
+        .map_err(|e| {
+            log::error!("NFC login data_source error: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { message: "internal server error".to_string() }),
+            )
+        })?;
+
+    if response.status() == StatusCode::NOT_FOUND || !response.status().is_success() {
+        log::warn!("NFC login failed: nfc_id={}", payload.nfc_id);
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                message: "NFC card not recognised or account inactive".to_string(),
+            }),
+        ));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct StudentMinimal { id: uuid::Uuid }
+
+    let student = response.json::<StudentMinimal>().await.map_err(|e| {
+        log::error!("NFC login parse error: {}", e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { message: "internal server error".to_string() }),
+        )
+    })?;
+
+    let user_id = student.id.to_string();
+    let role = "student".to_string();
+    let (access_token, refresh_token) = issue_tokens(&user_id, &role)?;
+
+    log::info!("NFC login success: nfc_id={}, user_id={}", payload.nfc_id, user_id);
+    Ok((StatusCode::OK, Json(Tokens { access_token, refresh_token, role })))
+}
+
+// ── Internal helper ───────────────────────────────────────────────────────────
+
+fn issue_tokens(
+    user_id: &str,
+    role: &str,
+) -> Result<(String, String), (StatusCode, Json<ErrorResponse>)> {
+    let key = HS256Key::from_bytes(JWT_SECRET);
+
+    let access_claims = Claims::with_custom_claims(
+        CustomClaims { role: role.to_string() },
+        Duration::from_mins(5),
+    )
+    .with_subject(user_id)
+    .with_jwt_id(uuid::Uuid::now_v7().to_string());
+
+    let access_token = key.authenticate(access_claims).map_err(|e| {
+        log::error!("Error creating access token: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { message: "internal server error".to_string() }))
+    })?;
+
+    let refresh_claims = Claims::with_custom_claims(
+        CustomClaims { role: role.to_string() },
+        Duration::from_days(30),
+    )
+    .with_subject(user_id)
+    .with_jwt_id(uuid::Uuid::now_v7().to_string());
+
+    let refresh_token = key.authenticate(refresh_claims).map_err(|e| {
+        log::error!("Error creating refresh token: {}", e);
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { message: "internal server error".to_string() }))
+    })?;
+
+    Ok((access_token, refresh_token))
+}
 
 pub async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
     use axum::response::IntoResponse;
 
     let path = uri.path().trim_start_matches('/');
 
-    // Serve uploaded files from filesystem
     if path.starts_with("uploads/") {
         if let Ok(data) = tokio::fs::read(path).await {
             let mime = mime_guess::from_path(path).first_or_octet_stream();
@@ -187,7 +250,6 @@ pub async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoRe
         }
     }
 
-    // Try to serve the exact file from embedded assets
     if let Some(content) = Assets::get(path) {
         let mime = mime_guess::from_path(path).first_or_octet_stream();
         return (
@@ -197,7 +259,6 @@ pub async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoRe
             .into_response();
     }
 
-    // SPA fallback: serve index.html for all other routes
     match Assets::get("index.html") {
         Some(content) => (
             [(axum::http::header::CONTENT_TYPE, "text/html".to_string())],

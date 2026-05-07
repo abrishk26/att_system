@@ -1,15 +1,22 @@
 use crate::types::*;
 use axum::{extract::{State, Path, Query}, Json, http::{StatusCode, Method}};
-use crate::models::{
-    Assignment, AttendanceRecord, Class, Course, CreateRecordRequest,
-    CreateSessionRequest, Session, UpdateSessionRequest, UserProfile,
-    Permission, PermissionWithStudent, UpdatePermissionStatusRequest, StudentProfile,
-};
+use crate::models::*;
 use crate::schema::{sessions, attendance_record, permissions};
 use crate::helpers::internal_error;
 use uuid::Uuid;
 use diesel::{ExpressionMethods, QueryDsl};
 use serde::Serialize;
+use chrono::Utc;
+
+const VALID_STATUSES: &[&str] = &["present", "absent", "late", "excused"];
+
+fn validate_status(s: &str) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    if VALID_STATUSES.contains(&s) { Ok(()) } else {
+        Err((StatusCode::BAD_REQUEST, Json(ErrorResponse {
+            message: format!("Invalid status value '{}'. Must be one of: present, absent, late, excused", s),
+        })))
+    }
+}
 
 pub async fn create_session_handler(
     State(state): State<AppState>,
@@ -18,21 +25,15 @@ pub async fn create_session_handler(
 ) -> Result<(StatusCode, Json<Session>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
     let new_session = Session {
         id: Uuid::now_v7(),
         instructor_id: payload.instructor_id,
         class_id: payload.class_id,
         course_id: payload.course_id,
         status: "incoming".to_string(),
+        created_at: Utc::now(),
     };
-
-    diesel::insert_into(sessions::table)
-        .values(&new_session)
-        .execute(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
+    diesel::insert_into(sessions::table).values(&new_session).execute(&mut conn).await.map_err(internal_error)?;
     Ok((StatusCode::CREATED, Json(new_session)))
 }
 
@@ -43,13 +44,9 @@ pub async fn update_session_handler(
 ) -> Result<(StatusCode, Json<Session>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
     let session = diesel::update(sessions::table.find(payload.session_id))
         .set(sessions::status.eq(payload.status))
-        .get_result::<Session>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
+        .get_result::<Session>(&mut conn).await.map_err(internal_error)?;
     Ok((StatusCode::OK, Json(session)))
 }
 
@@ -59,13 +56,8 @@ pub async fn get_sessions(
 ) -> Result<(StatusCode, Json<Vec<Session>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    let sessions = crate::schema::sessions::table
-        .load::<Session>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    Ok((StatusCode::OK, Json(sessions)))
+    let s = crate::schema::sessions::table.load::<Session>(&mut conn).await.map_err(internal_error)?;
+    Ok((StatusCode::OK, Json(s)))
 }
 
 pub async fn create_record_handler(
@@ -75,58 +67,17 @@ pub async fn create_record_handler(
 ) -> Result<(StatusCode, Json<Vec<AttendanceRecord>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    // Get the session to find the class_id
-    let session = sessions::table
-        .find(payload.session_id)
-        .get_result::<Session>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    // Get all students in that class
-    let response = state
-        .client
-        .request(
-            Method::GET,
-            format!(
-                "http://127.0.0.1:3000/student?course_id={}&class_id={}",
-                session.course_id, session.class_id
-            ),
-        )
-        .send()
-        .await
-        .map_err(internal_error)?;
-
+    let session = sessions::table.find(payload.session_id).get_result::<Session>(&mut conn).await.map_err(internal_error)?;
+    let response = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student?course_id={}&class_id={}", session.course_id, session.class_id)).send().await.map_err(internal_error)?;
     let students = match response.status() {
         StatusCode::OK => response.json::<Vec<StudentProfile>>().await.map_err(internal_error)?,
-        _ => {
-            return Err((
-                response.status(),
-                Json(ErrorResponse {
-                    message: "failed to fetch students from data source".to_string(),
-                }),
-            ));
-        }
+        _ => return Err((response.status(), Json(ErrorResponse { message: "failed to fetch students".to_string() }))),
     };
-
-    // Create attendance records
-    let new_records: Vec<AttendanceRecord> = students
-        .into_iter()
-        .map(|student| AttendanceRecord {
-            id: Uuid::now_v7(),
-            student_id: student.id,
-            session_id: payload.session_id,
-            status: "absent".to_string(), // Default status
-        })
-        .collect();
-
-    // Bulk insert
-    diesel::insert_into(attendance_record::table)
-        .values(&new_records)
-        .execute(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
+    let new_records: Vec<AttendanceRecord> = students.into_iter().map(|s| AttendanceRecord {
+        id: Uuid::now_v7(), student_id: s.id, session_id: payload.session_id,
+        status: "absent".to_string(), client_id: None,
+    }).collect();
+    diesel::insert_into(attendance_record::table).values(&new_records).execute(&mut conn).await.map_err(internal_error)?;
     Ok((StatusCode::CREATED, Json(new_records)))
 }
 
@@ -134,39 +85,17 @@ pub async fn get_profile(
     State(state): State<AppState>,
     ClaimsExtractor { user_id, role: _ }: ClaimsExtractor,
 ) -> Result<(StatusCode, Json<UserProfile>), (StatusCode, Json<ErrorResponse>)> {
-    let response = state
-        .client
-        .request(Method::GET, format!("http://127.0.0.1:3000/user/{}", user_id))
-        .send()
-        .await
-        .map_err(internal_error)?;
-
+    let response = state.client.request(Method::GET, format!("http://127.0.0.1:3000/user/{}", user_id)).send().await.map_err(internal_error)?;
     if response.status() != StatusCode::OK {
-        return Err((
-            response.status(),
-            Json(ErrorResponse {
-                message: "failed to fetch profile from data source".to_string(),
-            }),
-        ));
+        return Err((response.status(), Json(ErrorResponse { message: "failed to fetch profile".to_string() })));
     }
-
     let mut profile = response.json::<UserProfile>().await.map_err(internal_error)?;
-
     if profile.role == "student" {
-        let response = state
-            .client
-            .request(Method::GET, format!("http://127.0.0.1:3000/student/profile?id={}", user_id))
-            .send()
-            .await
-            .map_err(internal_error)?;
-
-        if response.status() == StatusCode::OK {
-            if let Ok(student_profile) = response.json::<StudentProfile>().await {
-                profile.nfc_id = Some(student_profile.nfc_id);
-            }
+        let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?id={}", user_id)).send().await.map_err(internal_error)?;
+        if r.status() == StatusCode::OK {
+            if let Ok(sp) = r.json::<StudentProfile>().await { profile.nfc_id = Some(sp.nfc_id); }
         }
     }
-
     Ok((StatusCode::OK, Json(profile)))
 }
 
@@ -175,24 +104,9 @@ pub async fn get_course_details(
     Path(course_id): Path<Uuid>,
     _: ClaimsExtractor,
 ) -> Result<(StatusCode, Json<Course>), (StatusCode, Json<ErrorResponse>)> {
-    let response = state
-        .client
-        .request(Method::GET, format!("http://127.0.0.1:3000/course/{}", course_id))
-        .send()
-        .await
-        .map_err(internal_error)?;
-
-    if response.status() != StatusCode::OK {
-        return Err((
-            response.status(),
-            Json(ErrorResponse {
-                message: "failed to fetch course details".to_string(),
-            }),
-        ));
-    }
-
-    let course = response.json::<Course>().await.map_err(internal_error)?;
-    Ok((StatusCode::OK, Json(course)))
+    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/course/{}", course_id)).send().await.map_err(internal_error)?;
+    if r.status() != StatusCode::OK { return Err((r.status(), Json(ErrorResponse { message: "failed to fetch course".to_string() }))); }
+    Ok((StatusCode::OK, Json(r.json::<Course>().await.map_err(internal_error)?)))
 }
 
 pub async fn get_class_details(
@@ -200,68 +114,47 @@ pub async fn get_class_details(
     Path(class_id): Path<Uuid>,
     _: ClaimsExtractor,
 ) -> Result<(StatusCode, Json<Class>), (StatusCode, Json<ErrorResponse>)> {
-    let response = state
-        .client
-        .request(Method::GET, format!("http://127.0.0.1:3000/class/{}", class_id))
-        .send()
-        .await
-        .map_err(internal_error)?;
-
-    if response.status() != StatusCode::OK {
-        return Err((
-            response.status(),
-            Json(ErrorResponse {
-                message: "failed to fetch class details".to_string(),
-            }),
-        ));
-    }
-
-    let class = response.json::<Class>().await.map_err(internal_error)?;
-    Ok((StatusCode::OK, Json(class)))
+    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/class/{}", class_id)).send().await.map_err(internal_error)?;
+    if r.status() != StatusCode::OK { return Err((r.status(), Json(ErrorResponse { message: "failed to fetch class".to_string() }))); }
+    Ok((StatusCode::OK, Json(r.json::<Class>().await.map_err(internal_error)?)))
 }
 
 pub async fn get_instructor_assignments(
     State(state): State<AppState>,
     InstructorClaims { user_id }: InstructorClaims,
 ) -> Result<(StatusCode, Json<Vec<Assignment>>), (StatusCode, Json<ErrorResponse>)> {
-    let response = state
-        .client
-        .request(
-            Method::GET,
-            format!("http://127.0.0.1:3000/instructor/assignment/{}", user_id),
-        )
-        .send()
-        .await
-        .map_err(internal_error)?;
-
-    if response.status() != StatusCode::OK {
-        // Save status before response.json() moves the response
-        let status = response.status();
-        
-        // Try to get error message from data_source
-        let err_msg = if let Ok(err_resp) = response.json::<ErrorResponse>().await {
-            format!("data_source: {}", err_resp.message)
-        } else {
-            "failed to fetch instructor assignments from data source".to_string()
-        };
-        
-        log::error!("Instructor assignments fetch failed ({}): {}", status, err_msg);
-        
-        return Err((
-            status,
-            Json(ErrorResponse {
-                message: err_msg,
-            }),
-        ));
+    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/instructor/assignment/{}", user_id)).send().await.map_err(internal_error)?;
+    if r.status() != StatusCode::OK {
+        let status = r.status();
+        let msg = r.json::<ErrorResponse>().await.map(|e| e.message).unwrap_or("failed to fetch assignments".into());
+        return Err((status, Json(ErrorResponse { message: msg })));
     }
-
-    let assignments = response
-        .json::<Vec<Assignment>>()
-        .await
-        .map_err(internal_error)?;
-    Ok((StatusCode::OK, Json(assignments)))
+    Ok((StatusCode::OK, Json(r.json::<Vec<Assignment>>().await.map_err(internal_error)?)))
 }
 
+/// B-08: GET /instructor/assignments/enriched
+pub async fn get_enriched_assignments_handler(
+    State(state): State<AppState>,
+    InstructorClaims { user_id }: InstructorClaims,
+) -> Result<(StatusCode, Json<Vec<EnrichedAssignment>>), (StatusCode, Json<ErrorResponse>)> {
+    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/instructor/assignment/enriched/{}", user_id)).send().await.map_err(internal_error)?;
+    if r.status() != StatusCode::OK {
+        return Err((r.status(), Json(ErrorResponse { message: "failed to fetch enriched assignments".into() })));
+    }
+    Ok((StatusCode::OK, Json(r.json::<Vec<EnrichedAssignment>>().await.map_err(internal_error)?)))
+}
+
+/// B-04: GET /schedule
+pub async fn get_schedule_handler(
+    State(state): State<AppState>,
+    ClaimsExtractor { user_id, .. }: ClaimsExtractor,
+) -> Result<(StatusCode, Json<Vec<ScheduleItem>>), (StatusCode, Json<ErrorResponse>)> {
+    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/schedule/{}", user_id)).send().await.map_err(internal_error)?;
+    if r.status() != StatusCode::OK {
+        return Err((r.status(), Json(ErrorResponse { message: "failed to fetch schedule".into() })));
+    }
+    Ok((StatusCode::OK, Json(r.json::<Vec<ScheduleItem>>().await.map_err(internal_error)?)))
+}
 
 pub async fn get_sessions_by_instructor(
     State(state): State<AppState>,
@@ -269,16 +162,41 @@ pub async fn get_sessions_by_instructor(
 ) -> Result<(StatusCode, Json<Vec<Session>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    let sessions = sessions::table
-        .filter(sessions::instructor_id.eq(Uuid::parse_str(&user_id).unwrap()))
-        .load::<Session>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    Ok((StatusCode::OK, Json(sessions)))
+    let s = sessions::table.filter(sessions::instructor_id.eq(Uuid::parse_str(&user_id).unwrap())).load::<Session>(&mut conn).await.map_err(internal_error)?;
+    Ok((StatusCode::OK, Json(s)))
 }
 
+async fn enrich_permission(state: &AppState, p: Permission) -> Result<PermissionWithStudent, (StatusCode, Json<ErrorResponse>)> {
+    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?id={}", p.student_id)).send().await.map_err(internal_error)?;
+    let student_name = if r.status() == StatusCode::OK {
+        let sp = r.json::<StudentProfile>().await.map_err(internal_error)?;
+        format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default())
+    } else { "Unknown Student".to_string() };
+    Ok(PermissionWithStudent { id: p.id, session_id: p.session_id, student_id: p.student_id, student_name, description: p.description, img_url: p.img_url, status: p.status, created_at: p.created_at })
+}
+
+/// B-02+B-09+B-10: GET /instructor/permissions?status=&limit=&offset=
+pub async fn get_all_permissions_handler(
+    State(state): State<AppState>,
+    InstructorClaims { user_id }: InstructorClaims,
+    Query(params): Query<PermissionsQueryParams>,
+) -> Result<(StatusCode, Json<Vec<PermissionWithStudent>>), (StatusCode, Json<ErrorResponse>)> {
+    use diesel_async::RunQueryDsl;
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
+    let instructor_id = Uuid::parse_str(&user_id).unwrap();
+    let session_ids: Vec<Uuid> = sessions::table.filter(sessions::instructor_id.eq(instructor_id)).load::<Session>(&mut conn).await.map_err(internal_error)?.into_iter().map(|s| s.id).collect();
+    if session_ids.is_empty() { return Ok((StatusCode::OK, Json(Vec::new()))); }
+
+    let mut query = permissions::table.filter(permissions::session_id.eq_any(&session_ids)).into_boxed();
+    if let Some(ref s) = params.status { query = query.filter(permissions::status.eq(s)); }
+
+    let found = query.load::<Permission>(&mut conn).await.map_err(internal_error)?;
+    let mut enriched = Vec::new();
+    for p in found { enriched.push(enrich_permission(&state, p).await?); }
+    Ok((StatusCode::OK, Json(enriched)))
+}
+
+/// GET /instructor/permissions/:session_id
 pub async fn get_permissions_by_session(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
@@ -286,122 +204,10 @@ pub async fn get_permissions_by_session(
 ) -> Result<(StatusCode, Json<Vec<PermissionWithStudent>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    let found_permissions = permissions::table
-        .filter(permissions::session_id.eq(session_id))
-        .load::<Permission>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    let mut enriched_permissions = Vec::new();
-
-    for permission in found_permissions {
-        let response = state
-            .client
-            .request(
-                Method::GET,
-                format!(
-                    "http://127.0.0.1:3000/student/profile?id={}",
-                    permission.student_id
-                ),
-            )
-            .send()
-            .await
-            .map_err(internal_error)?;
-
-        let student_name = if response.status() == StatusCode::OK {
-            let student_info = response.json::<StudentProfile>().await.map_err(internal_error)?;
-            format!(
-                "{} {}",
-                student_info.first_name,
-                student_info.last_name.unwrap_or_default()
-            )
-        } else {
-            "Unknown Student".to_string()
-        };
-
-        enriched_permissions.push(PermissionWithStudent {
-            id: permission.id,
-            session_id: permission.session_id,
-            student_id: permission.student_id,
-            student_name,
-            description: permission.description,
-            img_url: permission.img_url,
-            status: permission.status,
-        });
-    }
-
-    Ok((StatusCode::OK, Json(enriched_permissions)))
-}
-
-pub async fn get_all_permissions_handler(
-    State(state): State<AppState>,
-    InstructorClaims { user_id }: InstructorClaims,
-) -> Result<(StatusCode, Json<Vec<PermissionWithStudent>>), (StatusCode, Json<ErrorResponse>)> {
-    use diesel_async::RunQueryDsl;
-    let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    let instructor_id = Uuid::parse_str(&user_id).unwrap();
-
-    // 1. Get all sessions for this instructor
-    let instructor_sessions = sessions::table
-        .filter(sessions::instructor_id.eq(instructor_id))
-        .load::<Session>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    let session_ids: Vec<Uuid> = instructor_sessions.iter().map(|s| s.id).collect();
-
-    if session_ids.is_empty() {
-        return Ok((StatusCode::OK, Json(Vec::new())));
-    }
-
-    // 2. Get all permissions for these sessions
-    let found_permissions = permissions::table
-        .filter(permissions::session_id.eq_any(session_ids))
-        .load::<Permission>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    // 3. Enrich permissions with student name
-    let mut enriched_permissions = Vec::new();
-    for permission in found_permissions {
-        let response = state
-            .client
-            .request(
-                Method::GET,
-                format!(
-                    "http://127.0.0.1:3000/student/profile?id={}",
-                    permission.student_id
-                ),
-            )
-            .send()
-            .await
-            .map_err(internal_error)?;
-
-        let student_name = if response.status() == StatusCode::OK {
-            let student_info = response.json::<StudentProfile>().await.map_err(internal_error)?;
-            format!(
-                "{} {}",
-                student_info.first_name,
-                student_info.last_name.unwrap_or_default()
-            )
-        } else {
-            "Unknown Student".to_string()
-        };
-
-        enriched_permissions.push(PermissionWithStudent {
-            id: permission.id,
-            session_id: permission.session_id,
-            student_id: permission.student_id,
-            student_name,
-            description: permission.description,
-            img_url: permission.img_url,
-            status: permission.status,
-        });
-    }
-
-    Ok((StatusCode::OK, Json(enriched_permissions)))
+    let found = permissions::table.filter(permissions::session_id.eq(session_id)).load::<Permission>(&mut conn).await.map_err(internal_error)?;
+    let mut enriched = Vec::new();
+    for p in found { enriched.push(enrich_permission(&state, p).await?); }
+    Ok((StatusCode::OK, Json(enriched)))
 }
 
 pub async fn update_permission_handler(
@@ -412,43 +218,21 @@ pub async fn update_permission_handler(
 ) -> Result<(StatusCode, Json<Permission>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    // Normalize status: map 'approved' -> 'accepted' for backward compatibility
     let status = match payload.status.to_lowercase().as_str() {
         "accepted" | "approved" => "accepted".to_string(),
         "rejected" => "rejected".to_string(),
         "pending" => "pending".to_string(),
-        other => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    message: format!("Invalid permission status: '{}'. Allowed: accepted, rejected, pending", other),
-                }),
-            ));
-        }
+        other => return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: format!("Invalid permission status: '{}'. Allowed: accepted, rejected, pending", other) }))),
     };
-
-    let updated_permission = diesel::update(permissions::table.find(permission_id))
-        .set(permissions::status.eq(&status))
-        .get_result::<Permission>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    // If accepted, try to update the attendance record to excused (best-effort)
+    let updated = diesel::update(permissions::table.find(permission_id)).set(permissions::status.eq(&status)).get_result::<Permission>(&mut conn).await.map_err(internal_error)?;
     if status == "accepted" {
-        let excused_result = diesel::update(attendance_record::table)
-            .filter(attendance_record::student_id.eq(updated_permission.student_id))
-            .filter(attendance_record::session_id.eq(updated_permission.session_id))
+        let _ = diesel::update(attendance_record::table)
+            .filter(attendance_record::student_id.eq(updated.student_id))
+            .filter(attendance_record::session_id.eq(updated.session_id))
             .set(attendance_record::status.eq("excused"))
-            .execute(&mut conn)
-            .await;
-        
-        if let Err(e) = excused_result {
-            log::warn!("Could not mark attendance as excused (constraint may need updating): {}", e);
-        }
+            .execute(&mut conn).await;
     }
-
-    Ok((StatusCode::OK, Json(updated_permission)))
+    Ok((StatusCode::OK, Json(updated)))
 }
 
 pub async fn get_student_count_handler(
@@ -456,24 +240,11 @@ pub async fn get_student_count_handler(
     Query(params): Query<std::collections::HashMap<String, String>>,
     InstructorClaims { .. }: InstructorClaims,
 ) -> Result<(StatusCode, Json<usize>), (StatusCode, Json<ErrorResponse>)> {
-    let course_id = params.get("course_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "course_id missing".to_string() })))?;
-    let class_id = params.get("class_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "class_id missing".to_string() })))?;
-
-    let response = state
-        .client
-        .request(
-            Method::GET,
-            format!("http://127.0.0.1:3000/student?course_id={}&class_id={}", course_id, class_id),
-        )
-        .send()
-        .await
-        .map_err(internal_error)?;
-
-    if response.status() != StatusCode::OK {
-        return Ok((StatusCode::OK, Json(0)));
-    }
-
-    let students = response.json::<Vec<StudentProfile>>().await.map_err(internal_error)?;
+    let course_id = params.get("course_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "course_id missing".into() })))?;
+    let class_id = params.get("class_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "class_id missing".into() })))?;
+    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student?course_id={}&class_id={}", course_id, class_id)).send().await.map_err(internal_error)?;
+    if r.status() != StatusCode::OK { return Ok((StatusCode::OK, Json(0))); }
+    let students = r.json::<Vec<StudentProfile>>().await.map_err(internal_error)?;
     Ok((StatusCode::OK, Json(students.len())))
 }
 
@@ -482,67 +253,24 @@ pub async fn get_students_by_course_class_handler(
     Query(params): Query<std::collections::HashMap<String, String>>,
     InstructorClaims { .. }: InstructorClaims,
 ) -> Result<(StatusCode, Json<Vec<StudentProfile>>), (StatusCode, Json<ErrorResponse>)> {
-    let course_id = params.get("course_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "course_id missing".to_string() })))?;
-    let class_id = params.get("class_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "class_id missing".to_string() })))?;
-
-    let response = state
-        .client
-        .request(
-            Method::GET,
-            format!("http://127.0.0.1:3000/student?course_id={}&class_id={}", course_id, class_id),
-        )
-        .send()
-        .await
-        .map_err(internal_error)?;
-
-    if response.status() != StatusCode::OK {
-        return Ok((StatusCode::OK, Json(Vec::new())));
-    }
-
-    let mut students = response.json::<Vec<StudentProfile>>().await.map_err(internal_error)?;
-
-    // Calculate attendance for each student
     use diesel_async::RunQueryDsl;
+    let course_id = params.get("course_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "course_id missing".into() })))?;
+    let class_id = params.get("class_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "class_id missing".into() })))?;
+    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student?course_id={}&class_id={}", course_id, class_id)).send().await.map_err(internal_error)?;
+    if r.status() != StatusCode::OK { return Ok((StatusCode::OK, Json(Vec::new()))); }
+    let mut students = r.json::<Vec<StudentProfile>>().await.map_err(internal_error)?;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    // 1. Find all finished sessions for this course and class
-    let course_sessions = sessions::table
-        .filter(sessions::course_id.eq(Uuid::parse_str(course_id).map_err(internal_error)?))
-        .filter(sessions::class_id.eq(Uuid::parse_str(class_id).map_err(internal_error)?))
-        .filter(sessions::status.eq("finished"))
-        .load::<Session>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    let total_sessions = course_sessions.len();
-    let session_ids: Vec<Uuid> = course_sessions.into_iter().map(|s| s.id).collect();
-
-    if total_sessions > 0 {
-        // 2. Get all 'present' records for these sessions
-        let records = attendance_record::table
-            .filter(attendance_record::session_id.eq_any(session_ids))
-            .filter(attendance_record::status.eq("present"))
-            .load::<AttendanceRecord>(&mut conn)
-            .await
-            .map_err(internal_error)?;
-
-        // 3. Group by student_id and count
-        let mut attendance_counts = std::collections::HashMap::new();
-        for record in records {
-            *attendance_counts.entry(record.student_id).or_insert(0) += 1;
-        }
-
-        // 4. Update student profiles with percentage
-        for student in &mut students {
-            let present_count = *attendance_counts.get(&student.id).unwrap_or(&0);
-            student.attendance_percentage = Some((present_count as f64 / total_sessions as f64) * 100.0);
-        }
+    let course_sessions = sessions::table.filter(sessions::course_id.eq(Uuid::parse_str(course_id).map_err(internal_error)?)).filter(sessions::class_id.eq(Uuid::parse_str(class_id).map_err(internal_error)?)).filter(sessions::status.eq("finished")).load::<Session>(&mut conn).await.map_err(internal_error)?;
+    let total = course_sessions.len();
+    let ids: Vec<Uuid> = course_sessions.into_iter().map(|s| s.id).collect();
+    if total > 0 {
+        let records = attendance_record::table.filter(attendance_record::session_id.eq_any(&ids)).filter(attendance_record::status.eq("present")).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
+        let mut counts = std::collections::HashMap::new();
+        for r in records { *counts.entry(r.student_id).or_insert(0) += 1; }
+        for s in &mut students { let c = *counts.get(&s.id).unwrap_or(&0); s.attendance_percentage = Some((c as f64 / total as f64) * 100.0); }
     } else {
-        for student in &mut students {
-            student.attendance_percentage = Some(0.0);
-        }
+        for s in &mut students { s.attendance_percentage = Some(0.0); }
     }
-
     Ok((StatusCode::OK, Json(students)))
 }
 
@@ -552,68 +280,20 @@ pub async fn get_attendance_stats_handler(
 ) -> Result<(StatusCode, Json<f64>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-
-    // Get all finished sessions for this instructor
-    let instructor_sessions = sessions::table
-        .filter(sessions::instructor_id.eq(Uuid::parse_str(&user_id).unwrap()))
-        .filter(sessions::status.eq("finished"))
-        .load::<Session>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    if instructor_sessions.is_empty() {
-        return Ok((StatusCode::OK, Json(0.0)));
+    let inst_sessions = sessions::table.filter(sessions::instructor_id.eq(Uuid::parse_str(&user_id).unwrap())).filter(sessions::status.eq("finished")).load::<Session>(&mut conn).await.map_err(internal_error)?;
+    if inst_sessions.is_empty() { return Ok((StatusCode::OK, Json(0.0))); }
+    let mut total = 0; let mut present = 0;
+    for s in inst_sessions {
+        let recs = attendance_record::table.filter(attendance_record::session_id.eq(s.id)).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
+        total += recs.len(); present += recs.iter().filter(|r| r.status == "present").count();
     }
-
-    let mut total_records = 0;
-    let mut present_records = 0;
-
-    for session in instructor_sessions {
-        let records = attendance_record::table
-            .filter(attendance_record::session_id.eq(session.id))
-            .load::<AttendanceRecord>(&mut conn)
-            .await
-            .map_err(internal_error)?;
-        
-        total_records += records.len();
-        present_records += records.iter().filter(|r| r.status == "present").count();
-    }
-
-    let percentage = if total_records > 0 {
-        (present_records as f64 / total_records as f64) * 100.0
-    } else {
-        0.0
-    };
-
-    Ok((StatusCode::OK, Json(percentage)))
+    Ok((StatusCode::OK, Json(if total > 0 { (present as f64 / total as f64) * 100.0 } else { 0.0 })))
 }
 
-#[derive(Serialize)]
-pub struct InstructorDashboardMetrics {
-    pub stats: InstructorStats,
-    pub trends: Vec<AttendanceTrend>,
-    pub course_performance: Vec<CoursePerformance>,
-}
-
-#[derive(Serialize)]
-pub struct InstructorStats {
-    pub active_courses: usize,
-    pub total_sessions: usize,
-    pub avg_attendance: f64,
-    pub total_students: usize,
-}
-
-#[derive(Serialize)]
-pub struct AttendanceTrend {
-    pub date: String,
-    pub rate: f64,
-}
-
-#[derive(Serialize)]
-pub struct CoursePerformance {
-    pub course_id: String,
-    pub attendance_rate: f64,
-}
+#[derive(Serialize)] pub struct InstructorDashboardMetrics { pub stats: InstructorStats, pub trends: Vec<TrendPoint>, pub course_performance: Vec<CoursePoint> }
+#[derive(Serialize)] pub struct InstructorStats { pub active_courses: usize, pub total_sessions: usize, pub avg_attendance: f64, pub total_students: usize }
+#[derive(Serialize)] pub struct TrendPoint { pub date: String, pub rate: f64 }
+#[derive(Serialize)] pub struct CoursePoint { pub course_id: String, pub attendance_rate: f64 }
 
 pub async fn get_instructor_dashboard_metrics_handler(
     State(state): State<AppState>,
@@ -622,97 +302,30 @@ pub async fn get_instructor_dashboard_metrics_handler(
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
     let instructor_uuid = Uuid::parse_str(&user_id).map_err(internal_error)?;
-
-    // 1. Get all assignments to count courses
-    let assignments_resp = state.client.get(format!("http://127.0.0.1:3000/instructor/assignment/{}", user_id))
-        .send().await.map_err(internal_error)?;
-    let assignments: Vec<Assignment> = if assignments_resp.status() == StatusCode::OK {
-        assignments_resp.json().await.map_err(internal_error)?
-    } else { Vec::new() };
-
-    // 2. Get all sessions for this instructor
-    let all_sessions = sessions::table
-        .filter(sessions::instructor_id.eq(instructor_uuid))
-        .load::<Session>(&mut conn)
-        .await
-        .map_err(internal_error)?;
-
-    let completed_sessions: Vec<&Session> = all_sessions.iter().filter(|s| s.status == "finished").collect();
-    let session_ids: Vec<Uuid> = completed_sessions.iter().map(|s| s.id).collect();
-
-    // 3. Calculate avg attendance
-    let mut total_present = 0;
-    let mut total_records = 0;
-    let mut trends = Vec::new();
-    let mut course_map: std::collections::HashMap<Uuid, (usize, usize)> = std::collections::HashMap::new();
-
+    let assignments_resp = state.client.get(format!("http://127.0.0.1:3000/instructor/assignment/{}", user_id)).send().await.map_err(internal_error)?;
+    let assignments: Vec<Assignment> = if assignments_resp.status() == StatusCode::OK { assignments_resp.json().await.map_err(internal_error)? } else { Vec::new() };
+    let all_sessions = sessions::table.filter(sessions::instructor_id.eq(instructor_uuid)).load::<Session>(&mut conn).await.map_err(internal_error)?;
+    let completed: Vec<&Session> = all_sessions.iter().filter(|s| s.status == "finished").collect();
+    let session_ids: Vec<Uuid> = completed.iter().map(|s| s.id).collect();
+    let mut total_present = 0; let mut total_records = 0;
+    let mut trends = Vec::new(); let mut course_map: std::collections::HashMap<Uuid,(usize,usize)> = Default::default();
     if !session_ids.is_empty() {
-        let records = attendance_record::table
-            .filter(attendance_record::session_id.eq_any(&session_ids))
-            .load::<AttendanceRecord>(&mut conn)
-            .await
-            .map_err(internal_error)?;
-
-        total_records = records.len();
-        total_present = records.iter().filter(|r| r.status == "present").count();
-
-        // Trend calculation (simplified: grouping by session for now, normally would be by date)
-        let mut sorted_sessions = completed_sessions.clone();
-        sorted_sessions.sort_by_key(|s| s.id);
-        
-        for sess in sorted_sessions.iter().rev().take(7).rev() {
-            let sess_records: Vec<_> = records.iter().filter(|r| r.session_id == sess.id).collect();
-            let rate = if !sess_records.is_empty() {
-                (sess_records.iter().filter(|r| r.status == "present").count() as f64 / sess_records.len() as f64) * 100.0
-            } else { 0.0 };
-            
-            trends.push(AttendanceTrend {
-                date: sess.id.to_string()[..8].to_string(), // Short identifier for trend
-                rate,
-            });
-
-            let entry = course_map.entry(sess.course_id).or_insert((0, 0));
-            entry.0 += sess_records.iter().filter(|r| r.status == "present").count();
-            entry.1 += sess_records.len();
+        let records = attendance_record::table.filter(attendance_record::session_id.eq_any(&session_ids)).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
+        total_records = records.len(); total_present = records.iter().filter(|r| r.status == "present").count();
+        let mut sorted = completed.clone(); sorted.sort_by_key(|s| s.id);
+        for sess in sorted.iter().rev().take(7).rev() {
+            let sess_recs: Vec<_> = records.iter().filter(|r| r.session_id == sess.id).collect();
+            let rate = if !sess_recs.is_empty() { (sess_recs.iter().filter(|r| r.status=="present").count() as f64 / sess_recs.len() as f64)*100.0 } else { 0.0 };
+            trends.push(TrendPoint { date: sess.created_at.format("%Y-%m-%d").to_string(), rate });
+            let e = course_map.entry(sess.course_id).or_insert((0,0));
+            e.0 += sess_recs.iter().filter(|r| r.status=="present").count(); e.1 += sess_recs.len();
         }
     }
-
-    let avg_attendance = if total_records > 0 {
-        (total_present as f64 / total_records as f64) * 100.0
-    } else { 0.0 };
-
-    // 4. Course Performance
-    let mut course_performance = Vec::new();
-    for (course_id, (present, total)) in course_map {
-        course_performance.push(CoursePerformance {
-            course_id: course_id.to_string()[..8].to_string(),
-            attendance_rate: if total > 0 { (present as f64 / total as f64) * 100.0 } else { 0.0 },
-        });
-    }
-
-    // 5. Unique Student Count
+    let avg = if total_records > 0 { (total_present as f64/total_records as f64)*100.0 } else { 0.0 };
+    let course_performance = course_map.into_iter().map(|(id,(p,t))| CoursePoint { course_id: id.to_string()[..8].to_string(), attendance_rate: if t>0{(p as f64/t as f64)*100.0}else{0.0} }).collect();
     let total_students = if !session_ids.is_empty() {
-        let records = attendance_record::table
-            .filter(attendance_record::session_id.eq_any(&session_ids))
-            .load::<AttendanceRecord>(&mut conn)
-            .await
-            .map_err(internal_error)?;
-        
-        let mut unique_students = std::collections::HashSet::new();
-        for record in records {
-            unique_students.insert(record.student_id);
-        }
-        unique_students.len()
+        let recs = attendance_record::table.filter(attendance_record::session_id.eq_any(&session_ids)).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
+        recs.into_iter().map(|r| r.student_id).collect::<std::collections::HashSet<_>>().len()
     } else { 0 };
-
-    Ok((StatusCode::OK, Json(InstructorDashboardMetrics {
-        stats: InstructorStats {
-            active_courses: assignments.len(),
-            total_sessions: all_sessions.len(),
-            avg_attendance,
-            total_students,
-        },
-        trends,
-        course_performance,
-    })))
+    Ok((StatusCode::OK, Json(InstructorDashboardMetrics { stats: InstructorStats { active_courses: assignments.len(), total_sessions: all_sessions.len(), avg_attendance: avg, total_students }, trends, course_performance })))
 }

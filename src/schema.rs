@@ -6,6 +6,7 @@ diesel::table! {
         student_id -> Uuid,
         session_id -> Uuid,
         status -> Text,
+        client_id -> Nullable<Uuid>,
     }
 }
 
@@ -17,6 +18,7 @@ diesel::table! {
         description -> Text,
         img_url -> Nullable<Text>,
         status -> Text,
+        created_at -> Timestamptz,
     }
 }
 
@@ -27,10 +29,19 @@ diesel::table! {
         class_id -> Uuid,
         course_id -> Uuid,
         status -> Text,
+        created_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    token_denylist (jti) {
+        jti -> Text,
+        revoked_at -> Timestamptz,
+        expires_at -> Timestamptz,
     }
 }
 
 diesel::joinable!(attendance_record -> sessions (session_id));
 diesel::joinable!(permissions -> sessions (session_id));
 
-diesel::allow_tables_to_appear_in_same_query!(attendance_record, permissions, sessions,);
+diesel::allow_tables_to_appear_in_same_query!(attendance_record, permissions, sessions, token_denylist,);
