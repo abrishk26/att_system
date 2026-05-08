@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find c:\\\\\\\\Users\\\\\\\\omhb4\\\\\\\\Downloads\\\\\\\\att_system\\\\\\\\ui -maxdepth 1 \\\\\\( -name \"tailwind.config.*\" -o -name \"postcss.config.*\" \\\\\\))"
+    ]
+  }
+}
