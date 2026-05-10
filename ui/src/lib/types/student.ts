@@ -60,11 +60,12 @@ export interface PermissionRequest {
 
 // mock only — no backend table yet
 export interface Notification {
-  notificationId: string
-  type: 'low_attendance' | 'session_open' | 'permission_update' | 'announcement'
+  id: string
+  user_id: string
+  notification_type: string
   title: string
   message: string
-  isRead: boolean
-  createdAt: string
-  actionUrl: string | null
+  is_read: boolean
+  created_at: string
+  action_url: string | null
 }

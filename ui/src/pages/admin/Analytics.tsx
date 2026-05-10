@@ -1,40 +1,31 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  BarChart, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, PieChart, Pie, Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  ComposedChart, Line
 } from 'recharts';
-import { fetchDashboardData } from '../../api';
-import type { AttendanceTrend, AttendanceDistribution, CoursePerformance } from '../../api';
+import { api } from '../../api';
+import type { DepartmentAnalytics } from '../../api';
 import { useAuth } from '../../AuthContext';
 import './Analytics.css';
 
 const PIE_COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#ef4444'];
-const PIE_LABELS = [
-  { label: 'Excellent (90-100%)', color: '#22c55e' },
-  { label: 'Good (80-89%)',       color: '#3b82f6' },
-  { label: 'Fair (70-79%)',       color: '#f59e0b' },
-  { label: 'Poor (<70%)',         color: '#ef4444' },
-];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const pctFmt = (v: any) => `${v ?? 0}%`;
 
 export default function Analytics() {
   const { user } = useAuth();
-  const [trends, setTrends]           = useState<AttendanceTrend[]>([]);
-  const [distribution, setDist]       = useState<AttendanceDistribution | null>(null);
-  const [performance, setPerf]        = useState<CoursePerformance[]>([]);
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState('');
+  const [analytics, setAnalytics] = useState<DepartmentAnalytics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     if (!user) return;
     try {
       setError('');
-      const data = await fetchDashboardData(user);
-      setTrends(data.trends);
-      setDist(data.distribution);
-      setPerf(data.performance);
+      const data = await api.adminAnalytics();
+      setAnalytics(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load analytics');
     } finally {
@@ -48,39 +39,95 @@ export default function Analytics() {
     return () => clearInterval(t);
   }, [load]);
 
-  const pieData = distribution
-    ? [
-        { name: 'Excellent', value: distribution.excellent },
-        { name: 'Good',      value: distribution.good },
-        { name: 'Fair',      value: distribution.fair },
-        { name: 'Poor',      value: distribution.poor },
-      ]
-    : [];
-
-  const topCourse = performance.length > 0
-    ? performance.reduce((a, b) => a.attendance > b.attendance ? a : b)
-    : null;
-  const lowCourse = performance.length > 1
-    ? performance.reduce((a, b) => a.attendance < b.attendance ? a : b)
-    : null;
-
   if (loading) return (
     <div className="an-loading"><div className="spinner" /><span>Loading analytics...</span></div>
   );
   if (error) return (
     <div className="an-error"><span>⚠ {error}</span><button onClick={load}>Retry</button></div>
   );
+  if (!analytics) return null;
+
+  // Prepare chart data
+  const trendData = analytics.attendance_by_day.map(d => ({
+    day: d.day,
+    actual: Math.round(d.rate),
+    target: 85,
+    sessions: d.sessions,
+  }));
+
+  const coursePerformanceData = analytics.top_courses.map(c => ({
+    course: c.course_name || c.course_id.slice(0, 8),
+    attendance: Math.round(c.attendance_rate),
+    sessions: c.session_count,
+  }));
+
+  const bottomCoursesData = analytics.bottom_courses.map(c => ({
+    course: c.course_name || c.course_id.slice(0, 8),
+    attendance: Math.round(c.attendance_rate),
+    sessions: c.session_count,
+  }));
+
+  // Distribution buckets from top/bottom courses
+  const allCourseRates = [...analytics.top_courses, ...analytics.bottom_courses].map(c => c.attendance_rate);
+  const uniqueRates = [...new Set(allCourseRates)];
+  const distribution = {
+    excellent: uniqueRates.filter(r => r >= 90).length,
+    good: uniqueRates.filter(r => r >= 80 && r < 90).length,
+    fair: uniqueRates.filter(r => r >= 70 && r < 80).length,
+    poor: uniqueRates.filter(r => r < 70).length,
+  };
+
+  const pieData = [
+    { name: 'Excellent', value: distribution.excellent },
+    { name: 'Good', value: distribution.good },
+    { name: 'Fair', value: distribution.fair },
+    { name: 'Poor', value: distribution.poor },
+  ];
+
+  const topCourse = coursePerformanceData.length > 0
+    ? coursePerformanceData.reduce((a, b) => a.attendance > b.attendance ? a : b)
+    : null;
+  const lowCourse = bottomCoursesData.length > 0
+    ? bottomCoursesData.reduce((a, b) => a.attendance < b.attendance ? a : b)
+    : null;
+
+  // Radar data for instructor breakdown
+  const radarData = analytics.instructor_breakdown.map(i => ({
+    name: i.instructor_name || i.instructor_id.slice(0, 8),
+    attendance: Math.round(i.avg_attendance),
+    sessions: i.sessions,
+  }));
 
   return (
     <div className="analytics">
       <h2 className="an-title">Analytics Dashboard</h2>
 
-      {/* ── Line Chart ── */}
+      {/* ── Summary Stats ── */}
+      <div className="an-stats-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+        <div className="an-stat-card" style={{ background: '#fff', padding: '1.5rem', borderRadius: '1.5rem', border: '1px solid #f1f5f9', textAlign: 'center' }}>
+          <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Total Sessions</div>
+          <div style={{ fontSize: '2rem', fontWeight: 900, color: '#1e293b', marginTop: '0.25rem' }}>{analytics.total_sessions}</div>
+        </div>
+        <div className="an-stat-card" style={{ background: '#fff', padding: '1.5rem', borderRadius: '1.5rem', border: '1px solid #f1f5f9', textAlign: 'center' }}>
+          <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Total Students</div>
+          <div style={{ fontSize: '2rem', fontWeight: 900, color: '#1e293b', marginTop: '0.25rem' }}>{analytics.total_students}</div>
+        </div>
+        <div className="an-stat-card" style={{ background: '#fff', padding: '1.5rem', borderRadius: '1.5rem', border: '1px solid #f1f5f9', textAlign: 'center' }}>
+          <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Instructors</div>
+          <div style={{ fontSize: '2rem', fontWeight: 900, color: '#1e293b', marginTop: '0.25rem' }}>{analytics.total_instructors}</div>
+        </div>
+        <div className="an-stat-card" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', padding: '1.5rem', borderRadius: '1.5rem', textAlign: 'center', color: '#fff' }}>
+          <div style={{ fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.8 }}>Avg Attendance</div>
+          <div style={{ fontSize: '2rem', fontWeight: 900, marginTop: '0.25rem' }}>{Math.round(analytics.avg_attendance_rate)}%</div>
+        </div>
+      </div>
+
+      {/* ── Day-of-Week Trend ── */}
       <div className="an-card">
-        <h3>Department-Wide Attendance Trends</h3>
-        <p className="an-sub">Weekly attendance rate across all courses</p>
+        <h3>Attendance by Day of Week</h3>
+        <p className="an-sub">Real attendance rates aggregated across all finished sessions</p>
         <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={trends} margin={{ top: 10, right: 30, left: 0, bottom: 10 }}>
+          <ComposedChart data={trendData} margin={{ top: 10, right: 30, left: 0, bottom: 10 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
             <XAxis dataKey="day" stroke="#9ca3af" tick={{ fontSize: 12, fill: '#6b7280' }} />
             <YAxis stroke="#9ca3af" tick={{ fontSize: 12, fill: '#6b7280' }} domain={[0, 100]} unit="%" />
@@ -92,15 +139,7 @@ export default function Analytics() {
               wrapperStyle={{ fontSize: 13, paddingTop: 16 }}
               formatter={(value) => <span style={{ color: '#6b7280' }}>{value}</span>}
             />
-            <Line
-              type="monotone"
-              dataKey="actual"
-              stroke="#3b82f6"
-              strokeWidth={3}
-              dot={{ r: 5, fill: '#3b82f6', stroke: '#fff', strokeWidth: 2 }}
-              activeDot={{ r: 7 }}
-              name="Actual Attendance (%)"
-            />
+            <Bar dataKey="actual" name="Attendance %" fill="#6366f1" radius={[6, 6, 0, 0]} />
             <Line
               type="monotone"
               dataKey="target"
@@ -110,27 +149,27 @@ export default function Analytics() {
               dot={false}
               name="Target (%)"
             />
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
 
-      {/* ── Bar Chart ── */}
+      {/* ── Top Course Performance ── */}
       <div className="an-card">
-        <h3>Course Performance Analytics</h3>
-        <p className="an-sub">Attendance vs. participation by course</p>
-        {performance.length > 0 ? (
+        <h3>Top Course Performance</h3>
+        <p className="an-sub">Highest attendance courses across the department</p>
+        {coursePerformanceData.length > 0 ? (
           <>
             <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={performance} margin={{ top: 10, right: 30, left: 0, bottom: 10 }}>
+              <BarChart data={coursePerformanceData} margin={{ top: 10, right: 30, left: 0, bottom: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                <XAxis dataKey="course" stroke="#9ca3af" tick={{ fontSize: 12, fill: '#6b7280' }} />
+                <XAxis dataKey="course" stroke="#9ca3af" tick={{ fontSize: 11, fill: '#6b7280' }} />
                 <YAxis stroke="#9ca3af" tick={{ fontSize: 12, fill: '#6b7280' }} domain={[0, 100]} unit="%" />
                 <Tooltip
                   contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, fontSize: 13 }}
                   formatter={pctFmt}
                 />
                 <Bar dataKey="attendance" name="Attendance %" radius={[6, 6, 0, 0]}>
-                  {performance.map((entry, i) => (
+                  {coursePerformanceData.map((entry, i) => (
                     <Cell
                       key={i}
                       fill={entry === topCourse ? '#3b82f6' : '#8b5cf6'}
@@ -161,10 +200,31 @@ export default function Analytics() {
         )}
       </div>
 
-      {/* ── Pie Chart ── */}
+      {/* ── Instructor Radar ── */}
+      {radarData.length > 0 && (
+        <div className="an-card">
+          <h3>Instructor Performance Radar</h3>
+          <p className="an-sub">Attendance rates by instructor across their sessions</p>
+          <ResponsiveContainer width="100%" height={320}>
+            <RadarChart data={radarData}>
+              <PolarGrid stroke="#e5e7eb" />
+              <PolarAngleAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280' }} />
+              <PolarRadiusAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
+              <Radar name="Attendance %" dataKey="attendance" stroke="#6366f1" fill="#6366f1" fillOpacity={0.2} />
+              <Tooltip
+                contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, fontSize: 13 }}
+                formatter={pctFmt}
+              />
+              <Legend wrapperStyle={{ fontSize: 13, paddingTop: 16 }} />
+            </RadarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* ── Distribution Pie ── */}
       <div className="an-card">
-        <h3>Department Attendance Distribution</h3>
-        <p className="an-sub">Student attendance rate breakdown</p>
+        <h3>Course Attendance Distribution</h3>
+        <p className="an-sub">How courses are distributed by attendance bracket</p>
         {pieData.some(d => d.value > 0) ? (
           <>
             <div className="pie-wrap">
@@ -188,24 +248,17 @@ export default function Analytics() {
                   <Tooltip
                     contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, fontSize: 13 }}
                   />
-                  <Legend
-                    layout="horizontal"
-                    verticalAlign="bottom"
-                    align="center"
-                    wrapperStyle={{ fontSize: 12, paddingTop: 16 }}
-                    formatter={(value) => (
-                      <span style={{ color: '#6b7280' }}>
-                        {PIE_LABELS.find(l => l.label.startsWith(value))?.label ?? value}
-                      </span>
-                    )}
-                  />
                 </PieChart>
               </ResponsiveContainer>
             </div>
 
-            {/* Detailed legend table */}
             <div className="pie-table">
-              {PIE_LABELS.map((item, i) => (
+              {[
+                { label: 'Excellent (90-100%)', color: '#22c55e' },
+                { label: 'Good (80-89%)', color: '#3b82f6' },
+                { label: 'Fair (70-79%)', color: '#f59e0b' },
+                { label: 'Poor (<70%)', color: '#ef4444' },
+              ].map((item, i) => (
                 <div key={i} className="pie-row">
                   <span className="pie-dot" style={{ background: item.color }} />
                   <span className="pie-row-label">{item.label}</span>

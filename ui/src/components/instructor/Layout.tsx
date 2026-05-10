@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../AuthContext';
 import {
@@ -11,18 +11,35 @@ import {
     ChevronRight,
     ChevronLeft,
     X,
-    ShieldCheck
+    ShieldCheck,
+    FileText
 } from 'lucide-react';
+import { NotificationBell } from '../NotificationBell';
 
 export default function InstructorLayout() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [isProfileOpen, setIsProfileOpen] = useState(false);
-    const { user, logout } = useAuth();
+    const { user, logout, isLoading } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
 
-    if (!user) return null;
+    useEffect(() => {
+        if (!isLoading) {
+            if (!user) {
+                navigate('/instructor/login', { replace: true });
+            } else if (user.role !== 'instructor' && user.role !== 'admin') {
+                // If student tries to access instructor portal, send them back
+                navigate('/student/home', { replace: true });
+            }
+        }
+    }, [user, isLoading, navigate]);
+
+    if (isLoading || !user || (user.role !== 'instructor' && user.role !== 'admin')) return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+    );
 
     const instructorName = `${user.first_name}${user.last_name ? ` ${user.last_name}` : ''}`;
 
@@ -31,6 +48,7 @@ export default function InstructorLayout() {
         { title: 'My Courses', icon: BookOpen, path: '/instructor/courses' },
         { title: 'Attendance', icon: UserCheck, path: '/instructor/attendance' },
         { title: 'Permissions', icon: ShieldCheck, path: '/instructor/permissions' },
+        { title: 'Reports', icon: FileText, path: '/instructor/reports' },
     ];
 
     const handleLogout = () => {
@@ -132,6 +150,7 @@ export default function InstructorLayout() {
                     </div>
 
                     <div className="flex items-center gap-4">
+                        <NotificationBell />
                         <div className="h-8 w-px bg-slate-200 hidden sm:block mx-1"></div>
 
                         <div className="relative">

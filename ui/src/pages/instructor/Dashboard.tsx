@@ -31,8 +31,6 @@ import { Badge } from "../../components/ui/badge";
 import StudentReports from '../../components/instructor/reports/StudentReports';
 import SessionReports from '../../components/instructor/reports/SessionReports';
 import ComparativeReports from '../../components/instructor/reports/ComparativeReports';
-import ReportGeneratorDialog from '../../components/instructor/reports/ReportGeneratorDialog';
-import { exportToPDF, exportToCSV } from '../../lib/exportUtils';
 
 ChartJS.register(
     CategoryScale,
@@ -188,14 +186,6 @@ export default function InstructorDashboard() {
     };
 
 
-
-    const handleExportPDF = (filename: string, headers: any[], data: any[]) => {
-        exportToPDF(filename, headers, data, filename);
-    };
-
-    const handleExportCSV = (data: any[], filename: string) => {
-        exportToCSV(data, filename);
-    };
 
     return (
         <div className="p-4 md:p-8 space-y-10 max-w-[1600px] mx-auto animate-fade-in-up">
@@ -364,13 +354,6 @@ export default function InstructorDashboard() {
                                     <TabsTrigger value="sessions" className="rounded-lg">Sessions</TabsTrigger>
                                     <TabsTrigger value="comparative" className="rounded-lg">Comparative</TabsTrigger>
                                 </TabsList>
-                                
-                                <ReportGeneratorDialog 
-                                    assignments={assignments} 
-                                    metrics={metrics}
-                                    onExportPDF={handleExportPDF} 
-                                    onExportCSV={handleExportCSV} 
-                                />
                             </div>
                             <TabsList className="bg-slate-100/80 p-1 flex md:hidden w-full overflow-x-auto rounded-xl">
                                 <TabsTrigger value="summary">Summary</TabsTrigger>

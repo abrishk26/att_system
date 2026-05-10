@@ -106,7 +106,7 @@ export const submitPermission = async (payload: SubmitPermissionPayload): Promis
     headers.append('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(`${BASE_URL}/student/permissions`, {
+  const response = await fetch(`${BASE_URL}/api/student/permissions`, {
     method: 'POST',
     headers,
     body: formData,

@@ -1,4 +1,5 @@
 const BASE_URL = 'http://localhost:3001';
+import type { Notification } from './lib/types/student';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -188,30 +189,61 @@ export interface StudentDashboardMetrics {
   attendance_trend: Array<{ date: string; status: string }>;
 }
 
+export interface TapLogEntry {
+  id: string;
+  nfc_id: string;
+  session_id: string;
+  student_id?: string;
+  student_name?: string;
+  success: boolean;
+  reason?: string;
+  tapped_at: string;
+}
+
+export interface DepartmentAnalytics {
+  total_students: number;
+  total_sessions: number;
+  total_instructors: number;
+  avg_attendance_rate: number;
+  attendance_by_day: Array<{ day: string; rate: number; sessions: number }>;
+  top_courses: Array<{ course_id: string; course_name?: string; attendance_rate: number; session_count: number }>;
+  bottom_courses: Array<{ course_id: string; course_name?: string; attendance_rate: number; session_count: number }>;
+  instructor_breakdown: Array<{ instructor_id: string; instructor_name?: string; sessions: number; avg_attendance: number }>;
+}
+
 let onTokenUpdate: ((token: string | null) => void) | null = null;
+let refreshPromise: Promise<string | null> | null = null;
 
 async function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
   const refresh_token = localStorage.getItem('refresh_token');
   if (!refresh_token) return null;
-  try {
-    const res = await fetch(`${BASE_URL}/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token }),
-    });
-    if (!res.ok) {
+  
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/api/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token }),
+      });
+      if (!res.ok) {
+        if (onTokenUpdate) onTokenUpdate(null);
+        return null;
+      }
+      const data = await res.json();
+      localStorage.setItem('access_token', data.access_token);
+      localStorage.setItem('refresh_token', data.refresh_token);
+      if (onTokenUpdate) onTokenUpdate(data.access_token);
+      return data.access_token;
+    } catch {
       if (onTokenUpdate) onTokenUpdate(null);
       return null;
+    } finally {
+      refreshPromise = null;
     }
-    const data = await res.json();
-    localStorage.setItem('access_token', data.access_token);
-    localStorage.setItem('refresh_token', data.refresh_token);
-    if (onTokenUpdate) onTokenUpdate(data.access_token);
-    return data.access_token;
-  } catch {
-    if (onTokenUpdate) onTokenUpdate(null);
-    return null;
-  }
+  })();
+
+  return refreshPromise;
 }
 
 function authHeaders(token?: string, isMultipart = false): HeadersInit {
@@ -224,7 +256,7 @@ function authHeaders(token?: string, isMultipart = false): HeadersInit {
 
 export async function request<T>(path: string, options?: RequestInit, retry = true): Promise<T> {
   const isMultipart = options?.body instanceof FormData;
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(`${BASE_URL}/api${path}`, {
     ...options,
     headers: { ...authHeaders(undefined, isMultipart), ...options?.headers }
   });
@@ -232,7 +264,7 @@ export async function request<T>(path: string, options?: RequestInit, retry = tr
   if (res.status === 401 && retry && path !== '/login' && path !== '/auth/login/nfc') {
     const newToken = await refreshAccessToken();
     if (newToken) {
-      const res2 = await fetch(`${BASE_URL}${path}`, {
+      const res2 = await fetch(`${BASE_URL}/api${path}`, {
         ...options,
         headers: { ...authHeaders(newToken, isMultipart), ...options?.headers },
       });
@@ -299,6 +331,9 @@ export const api = {
 
   // ── Profile ─────────────────────────────────────────────────────────────────
   profile: () => request<UserProfile>('/profile'),
+
+  /** B-12: Token identity verification */
+  verify: () => request<{ user_id: string; role: string }>('/auth/verify'),
 
   // ── Schedule ─────────────────────────────────────────────────────────────────
   /** B-04: timetable for the current user */
@@ -398,6 +433,17 @@ export const api = {
   studentCourses: () => request<Course[]>('/student/courses'),
   studentSessions: () => request<AttendanceRecord[]>('/sessions/student'),
   studentDashboardMetrics: () => request<StudentDashboardMetrics>('/student/dashboard-metrics'),
+
+  // ── Tap Log (NFC audit trail) ────────────────────────────────────────────────
+  tapLog: (sessionId: string) => request<TapLogEntry[]>(`/tap-log/${sessionId}`),
+
+  // ── Admin / Department Head ──────────────────────────────────────────────────
+  adminAnalytics: () => request<DepartmentAnalytics>('/admin/analytics'),
+
+  // ── Notifications ────────────────────────────────────────────────────────────
+  getNotifications: () => request<Notification[]>('/notifications'),
+  markNotificationRead: (id: string) => request(`/notifications/${id}/read`, { method: 'PATCH' }),
+  markAllNotificationsRead: () => request('/notifications/read-all', { method: 'PATCH' }),
 };
 
 // Helper function for dashboard data

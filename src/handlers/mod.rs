@@ -10,6 +10,7 @@ use crate::schema::token_denylist;
 
 pub mod instructors;
 pub mod students;
+pub mod notifications;
 
 const JWT_SECRET: &[u8] = b"raw_llkey_hastobeverylongtobestrongbuttheymakeitatruntime";
 
@@ -31,27 +32,28 @@ pub async fn login_handler(
             )
         })?;
 
-    match response.status() {
-        StatusCode::OK => {
-            let json = response.json::<UserData>().await.map_err(|e| {
-                log::error!("Error: {}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse { message: "internal server error".to_string() }),
-                )
-            })?;
-            let (access_token, refresh_token) = issue_tokens(&json.user_id, &json.role)?;
-            log::info!("User logged in: user_id={}, role={}", json.user_id, json.role);
-            Ok((StatusCode::OK, Json(Tokens { access_token, refresh_token, role: json.role })))
-        }
-        StatusCode::BAD_REQUEST => Err((
+    if response.status().is_success() {
+        let json = response.json::<UserData>().await.map_err(|e| {
+            log::error!("Login response parse error: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { message: "internal server error".to_string() }),
+            )
+        })?;
+        log::info!("Data source login success: user_id={}, role={}", json.user_id, json.role);
+        let (access_token, refresh_token) = issue_tokens(&json.user_id, &json.role)?;
+        log::info!("Tokens issued for user_id={}, role={}", json.user_id, json.role);
+        Ok((StatusCode::OK, Json(Tokens { access_token, refresh_token, role: json.role })))
+    } else if response.status() == StatusCode::BAD_REQUEST {
+        Err((
             StatusCode::UNAUTHORIZED,
             Json(ErrorResponse { message: "invalid username or password".to_string() }),
-        )),
-        _ => Err((
+        ))
+    } else {
+        Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { message: "internal server error".to_string() }),
-        )),
+        ))
     }
 }
 
@@ -102,6 +104,12 @@ pub async fn refresh_handler(
 
     let (access_token, refresh_token) = issue_tokens(&user_id, &role)?;
     Ok((StatusCode::OK, Json(Tokens { access_token, refresh_token, role })))
+}
+
+pub async fn verify_handler(
+    ClaimsExtractor { user_id, role }: ClaimsExtractor,
+) -> Result<(StatusCode, Json<UserVerifyResponse>), (StatusCode, Json<ErrorResponse>)> {
+    Ok((StatusCode::OK, Json(UserVerifyResponse { id: user_id, role })))
 }
 
 /// POST /logout — revokes the refresh token server-side (B-03)
@@ -181,9 +189,9 @@ pub async fn nfc_login_handler(
     }
 
     #[derive(serde::Deserialize)]
-    struct StudentMinimal { id: uuid::Uuid }
+    struct UserProfileMinimal { id: uuid::Uuid, role: String }
 
-    let student = response.json::<StudentMinimal>().await.map_err(|e| {
+    let profile = response.json::<UserProfileMinimal>().await.map_err(|e| {
         log::error!("NFC login parse error: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -191,11 +199,11 @@ pub async fn nfc_login_handler(
         )
     })?;
 
-    let user_id = student.id.to_string();
-    let role = "student".to_string();
+    let user_id = profile.id.to_string();
+    let role = profile.role;
     let (access_token, refresh_token) = issue_tokens(&user_id, &role)?;
 
-    log::info!("NFC login success: nfc_id={}, user_id={}", payload.nfc_id, user_id);
+    log::info!("NFC login success: nfc_id={}, user_id={}, role={}", payload.nfc_id, user_id, role);
     Ok((StatusCode::OK, Json(Tokens { access_token, refresh_token, role })))
 }
 

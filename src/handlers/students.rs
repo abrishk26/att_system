@@ -2,9 +2,10 @@ use uuid::Uuid;
 use diesel::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use axum::{extract::{State, Path, Multipart, Query}, http::{StatusCode, Method}, Json};
 use crate::types::*;
-use crate::schema::{attendance_record, sessions};
+use crate::schema::{attendance_record, sessions, tap_log};
 use crate::helpers::internal_error;
 use crate::models::*;
+use chrono::Utc;
 
 const VALID_STATUSES: &[&str] = &["present", "absent", "late", "excused"];
 
@@ -16,9 +17,34 @@ fn validate_status(s: &str) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
     }
 }
 
+/// Inserts a tap_log entry for auditing NFC tap attempts
+async fn log_tap(
+    conn: &mut diesel_async::AsyncPgConnection,
+    nfc_id: &str,
+    session_id: Uuid,
+    student_id: Option<Uuid>,
+    success: bool,
+    reason: Option<String>,
+) {
+    use diesel_async::RunQueryDsl;
+    let entry = TapLog {
+        id: Uuid::now_v7(),
+        nfc_id: nfc_id.to_string(),
+        session_id,
+        student_id,
+        success,
+        reason,
+        tapped_at: Utc::now(),
+    };
+    let _ = diesel::insert_into(tap_log::table)
+        .values(&entry)
+        .execute(conn)
+        .await;
+}
+
 pub async fn get_sessions_by_student(
     State(state): State<AppState>,
-    ClaimsExtractor { user_id, .. }: ClaimsExtractor,
+    StudentClaims { user_id }: StudentClaims,
 ) -> Result<(StatusCode, Json<Vec<AttendanceRecord>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
@@ -30,7 +56,7 @@ pub async fn get_sessions_by_student(
 
 pub async fn get_student_courses(
     State(state): State<AppState>,
-    ClaimsExtractor { user_id, .. }: ClaimsExtractor,
+    StudentClaims { user_id }: StudentClaims,
 ) -> Result<(StatusCode, Json<Vec<Course>>), (StatusCode, Json<ErrorResponse>)> {
     let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/courses/{}", user_id)).send().await.map_err(internal_error)?;
     if r.status() != StatusCode::OK { return Err((r.status(), Json(ErrorResponse { message: "failed to fetch student courses".into() }))); }
@@ -40,7 +66,7 @@ pub async fn get_student_courses(
 pub async fn get_records_with_student_info(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
-    _: ClaimsExtractor,
+    _: InstructorClaims,
 ) -> Result<(StatusCode, Json<Vec<AttendanceRecordWithStudent>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
@@ -60,31 +86,57 @@ pub async fn get_records_with_student_info(
     Ok((StatusCode::OK, Json(enriched)))
 }
 
-/// PATCH /record/update — B-06: validates status before update
+/// PATCH /record/update — B-06: validates status, logs tap, detects duplicates
 pub async fn mark_attendance_handler(
     State(state): State<AppState>,
-    _: ClaimsExtractor,
+    _: InstructorClaims,
     Json(payload): Json<UpdateRecordRequest>,
 ) -> Result<(StatusCode, Json<AttendanceRecord>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     validate_status(&payload.status)?;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
+
+    // Look up student by NFC ID
     let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", payload.nfc_id)).send().await.map_err(internal_error)?;
     if r.status() != StatusCode::OK {
+        // Log failed tap (unknown NFC card)
+        log_tap(&mut conn, &payload.nfc_id, payload.session_id, None, false, Some("NFC card not recognised".into())).await;
         return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { message: "student not found".into() })));
     }
     let sp = r.json::<StudentProfile>().await.map_err(internal_error)?;
+
+    // Check for duplicate tap (student already marked present in this session)
+    let existing = attendance_record::table
+        .filter(attendance_record::session_id.eq(payload.session_id).and(attendance_record::student_id.eq(sp.id)))
+        .get_result::<AttendanceRecord>(&mut conn)
+        .await
+        .ok();
+
+    if let Some(ref rec) = existing {
+        if rec.status == "present" && payload.status == "present" {
+            // Duplicate tap — log it as anomaly, return existing record
+            log_tap(&mut conn, &payload.nfc_id, payload.session_id, Some(sp.id), false, Some("duplicate tap — already marked present".into())).await;
+            log::warn!("Duplicate tap detected: nfc_id={}, session_id={}", payload.nfc_id, payload.session_id);
+            return Ok((StatusCode::OK, Json(rec.clone())));
+        }
+    }
+
+    // Update attendance status
     let record = diesel::update(attendance_record::table)
         .filter(attendance_record::session_id.eq(payload.session_id).and(attendance_record::student_id.eq(sp.id)))
         .set(attendance_record::status.eq(&payload.status))
         .get_result::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
+
+    // Log successful tap
+    log_tap(&mut conn, &payload.nfc_id, payload.session_id, Some(sp.id), true, None).await;
+
     Ok((StatusCode::OK, Json(record)))
 }
 
-/// PATCH /record/batch-update — atomic batch update with per-item result reporting
+/// PATCH /record/batch-update — B-05, with tap logging
 pub async fn batch_update_attendance_handler(
     State(state): State<AppState>,
-    _: ClaimsExtractor,
+    _: InstructorClaims,
     Json(payload): Json<BatchUpdateRequest>,
 ) -> Result<(StatusCode, Json<BatchUpdateResponse>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
@@ -109,31 +161,43 @@ pub async fn batch_update_attendance_handler(
 
     for item in &payload.updates {
         if validate_status(&item.status).is_err() {
-            early_results.push(BatchUpdateResult {
-                nfc_id: item.nfc_id.clone(),
-                result: "failed".into(),
-                reason: Some(format!(
-                    "invalid status '{}'; must be one of: present, absent, late, excused",
-                    item.status
-                )),
-                record: None,
-            });
+            log_tap(&mut conn, &item.nfc_id, payload.session_id, None, false, Some(format!("invalid status '{}'", item.status))).await;
             continue;
         }
+        let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", item.nfc_id)).send().await.map_err(internal_error)?;
+        if r.status() != StatusCode::OK {
+            log_tap(&mut conn, &item.nfc_id, payload.session_id, None, false, Some("student not found".into())).await;
+            continue;
+        }
+        let sp = match r.json::<StudentProfile>().await { Ok(s) => s, Err(_) => continue };
 
-        let resp = state
-            .client
-            .request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", item.nfc_id))
-            .send()
+        // Check for duplicate
+        let existing = attendance_record::table
+            .filter(attendance_record::session_id.eq(payload.session_id).and(attendance_record::student_id.eq(sp.id)))
+            .get_result::<AttendanceRecord>(&mut conn)
             .await
-            .map_err(internal_error)?;
+            .ok();
 
-        if !resp.status().is_success() {
-            early_results.push(BatchUpdateResult {
-                nfc_id: item.nfc_id.clone(),
-                result: "failed".into(),
-                reason: Some("nfc_id not recognised".into()),
-                record: None,
+        if let Some(ref rec) = existing {
+            if rec.status == "present" && item.status == "present" {
+                log_tap(&mut conn, &item.nfc_id, payload.session_id, Some(sp.id), false, Some("duplicate tap".into())).await;
+                results.push(AttendanceRecordWithStudent {
+                    id: rec.id, student_id: rec.student_id, session_id: rec.session_id,
+                    status: rec.status.clone(), student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()), nfc_id: sp.nfc_id.clone(),
+                });
+                continue;
+            }
+        }
+
+        let updated = diesel::update(attendance_record::table)
+            .filter(attendance_record::session_id.eq(payload.session_id).and(attendance_record::student_id.eq(sp.id)))
+            .set(attendance_record::status.eq(&item.status))
+            .get_result::<AttendanceRecord>(&mut conn).await;
+        if let Ok(rec) = updated {
+            log_tap(&mut conn, &item.nfc_id, payload.session_id, Some(sp.id), true, None).await;
+            results.push(AttendanceRecordWithStudent {
+                id: rec.id, student_id: rec.student_id, session_id: rec.session_id,
+                status: rec.status, student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()), nfc_id: sp.nfc_id.clone(),
             });
             continue;
         }
@@ -262,7 +326,7 @@ pub async fn batch_update_attendance_handler(
 /// POST /record/offline-sync — B-11: idempotent batch NFC replay
 pub async fn offline_sync_handler(
     State(state): State<AppState>,
-    _: ClaimsExtractor,
+    _: InstructorClaims,
     Json(payload): Json<OfflineSyncRequest>,
 ) -> Result<(StatusCode, Json<OfflineSyncResponse>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
@@ -307,7 +371,7 @@ pub async fn offline_sync_handler(
 
 pub async fn get_student_permissions(
     State(state): State<AppState>,
-    ClaimsExtractor { user_id, .. }: ClaimsExtractor,
+    StudentClaims { user_id }: StudentClaims,
 ) -> Result<(StatusCode, Json<Vec<crate::models::Permission>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
@@ -319,11 +383,10 @@ pub async fn get_student_permissions(
 
 pub async fn create_permission_handler(
     State(state): State<AppState>,
-    ClaimsExtractor { user_id, .. }: ClaimsExtractor,
+    StudentClaims { user_id }: StudentClaims,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<crate::models::Permission>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
-    use chrono::Utc;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
     let mut session_id = None; let mut description = None; let mut img_url = None;
     while let Some(field) = multipart.next_field().await.map_err(internal_error)? {
@@ -348,12 +411,32 @@ pub async fn create_permission_handler(
         description: desc, img_url, status: "pending".into(), created_at: Utc::now(),
     };
     diesel::insert_into(crate::schema::permissions::table).values(&new_perm).execute(&mut conn).await.map_err(internal_error)?;
+
+    // Insert Notification for Instructor
+    if let Ok(session) = crate::schema::sessions::table
+        .find(session_id_uuid)
+        .first::<crate::models::Session>(&mut conn)
+        .await
+    {
+        let notif = crate::models::NewNotification {
+            user_id: session.instructor_id,
+            title: "New Permission Request".into(),
+            message: "A student has submitted a new permission request for your review.".into(),
+            notification_type: "permission_update".into(),
+            action_url: Some("/instructor/permissions".into()),
+        };
+        let _ = diesel::insert_into(crate::schema::notifications::table)
+            .values(&notif)
+            .execute(&mut conn)
+            .await;
+    }
+
     Ok((StatusCode::CREATED, Json(new_perm)))
 }
 
 pub async fn get_student_sessions(
     State(state): State<AppState>,
-    ClaimsExtractor { user_id, .. }: ClaimsExtractor,
+    StudentClaims { user_id }: StudentClaims,
 ) -> Result<(StatusCode, Json<Vec<crate::models::Session>>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
@@ -365,18 +448,105 @@ pub async fn get_student_sessions(
 
 pub async fn get_student_dashboard_metrics_handler(
     State(state): State<AppState>,
-    ClaimsExtractor { user_id, .. }: ClaimsExtractor,
+    StudentClaims { user_id }: StudentClaims,
 ) -> Result<(StatusCode, Json<crate::models::StudentDashboardMetrics>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-    let records = attendance_record::table.filter(attendance_record::student_id.eq(Uuid::parse_str(&user_id).unwrap())).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
+    let student_uuid = Uuid::parse_str(&user_id).unwrap();
+    let records = attendance_record::table.filter(attendance_record::student_id.eq(student_uuid)).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
     let total = records.len() as f64;
     let present = records.iter().filter(|r| r.status == "present").count() as f64;
     let overall = if total > 0.0 { (present / total) * 100.0 } else { 0.0 };
-    let trend = records.iter().map(|r| crate::models::AttendanceTrend { date: "2026-05-01".into(), status: r.status.clone() }).collect();
+
+    // Build per-course performance using session data
+    let session_ids: Vec<Uuid> = records.iter().map(|r| r.session_id).collect();
+    let student_sessions = sessions::table.filter(sessions::id.eq_any(&session_ids)).load::<Session>(&mut conn).await.map_err(internal_error)?;
+    let sessions_map: std::collections::HashMap<Uuid, &Session> = student_sessions.iter().map(|s| (s.id, s)).collect();
+
+    let mut course_stats: std::collections::HashMap<Uuid, (usize, usize)> = std::collections::HashMap::new();
+    for rec in &records {
+        if let Some(sess) = sessions_map.get(&rec.session_id) {
+            let entry = course_stats.entry(sess.course_id).or_insert((0, 0));
+            entry.1 += 1; // total
+            if rec.status == "present" { entry.0 += 1; } // present
+        }
+    }
+
+    let mut courses_performance = Vec::new();
+    for (course_id, (pres, tot)) in &course_stats {
+        let course_name = match state.client.request(Method::GET, format!("http://127.0.0.1:3000/course/{}", course_id)).send().await {
+            Ok(r) if r.status() == StatusCode::OK => r.json::<Course>().await.map(|c| c.name).unwrap_or_else(|_| course_id.to_string()),
+            _ => course_id.to_string(),
+        };
+        courses_performance.push(crate::models::CoursePerformance {
+            course_name,
+            percentage: if *tot > 0 { (*pres as f64 / *tot as f64) * 100.0 } else { 0.0 },
+        });
+    }
+
+    // Build trend data from recent records
+    let trend: Vec<crate::models::AttendanceTrend> = records.iter().rev().take(20).map(|r| {
+        let date = sessions_map.get(&r.session_id)
+            .map(|s| s.created_at.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| "unknown".into());
+        crate::models::AttendanceTrend { date, status: r.status.clone() }
+    }).collect();
+
     Ok((StatusCode::OK, Json(crate::models::StudentDashboardMetrics {
         overall_attendance: overall,
-        courses_performance: vec![crate::models::CoursePerformance { course_name: "Enrolled Courses".into(), percentage: overall }],
+        courses_performance,
         attendance_trend: trend,
     })))
+}
+
+/// GET /tap-log/:session_id — view tap history for a session
+pub async fn get_tap_log_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<Uuid>,
+    _: InstructorClaims,
+) -> Result<(StatusCode, Json<Vec<TapLogResponse>>), (StatusCode, Json<ErrorResponse>)> {
+    use diesel_async::RunQueryDsl;
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
+    let logs = tap_log::table
+        .filter(tap_log::session_id.eq(session_id))
+        .order(tap_log::tapped_at.desc())
+        .load::<TapLog>(&mut conn)
+        .await
+        .map_err(internal_error)?;
+
+    let mut responses = Vec::new();
+    for log_entry in logs {
+        let student_name = if let Some(sid) = log_entry.student_id {
+            let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?id={}", sid)).send().await.ok();
+            r.and_then(|resp| {
+                if resp.status() == StatusCode::OK {
+                    // We need to block on json parsing — use a simpler approach
+                    None // Will be filled below
+                } else { None }
+            })
+        } else { None };
+
+        // Simpler approach: try to get student name for enrichment
+        let name = if let Some(sid) = log_entry.student_id {
+            match state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?id={}", sid)).send().await {
+                Ok(resp) if resp.status() == StatusCode::OK => {
+                    resp.json::<StudentProfile>().await.ok().map(|sp| format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()))
+                }
+                _ => None,
+            }
+        } else { student_name };
+
+        responses.push(TapLogResponse {
+            id: log_entry.id,
+            nfc_id: log_entry.nfc_id,
+            session_id: log_entry.session_id,
+            student_id: log_entry.student_id,
+            student_name: name,
+            success: log_entry.success,
+            reason: log_entry.reason,
+            tapped_at: log_entry.tapped_at,
+        });
+    }
+
+    Ok((StatusCode::OK, Json(responses)))
 }

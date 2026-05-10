@@ -1,85 +1,46 @@
+import { api } from '../../api';
 import type { Notification } from '../types/student';
 
-const MOCK_DELAY = 300;
-
-const readStateKey = (studentId: string): string => `student_notification_reads_${studentId}`;
-
-const getReadIds = (studentId: string): string[] => {
+/**
+ * Fetches notifications from the backend API.
+ * This replaces the previous on-the-fly generation logic.
+ */
+export const getNotifications = async (user: { id: string, role: string }): Promise<Notification[]> => {
+  if (!user || !user.id) return [];
+  
   try {
-    const raw = localStorage.getItem(readStateKey(studentId));
-    return raw ? (JSON.parse(raw) as string[]) : [];
-  } catch {
+    const backendNotifs = await api.getNotifications();
+    
+    // Sort by created_at descending
+    return backendNotifs.sort((a, b) => {
+      const dateA = new Date(a.created_at.replace(' ', 'T')).getTime();
+      const dateB = new Date(b.created_at.replace(' ', 'T')).getTime();
+      return (isNaN(dateB) ? 0 : dateB) - (isNaN(dateA) ? 0 : dateA);
+    });
+  } catch (err) {
+    console.error('Failed to fetch notifications from backend:', err);
     return [];
   }
 };
 
-const setReadIds = (studentId: string, ids: string[]): void => {
-  localStorage.setItem(readStateKey(studentId), JSON.stringify(ids));
-};
-
-const baseNotifications: Notification[] = [
-  {
-    notificationId: 'notif-101',
-    type: 'session_open',
-    title: 'Attendance Open',
-    message: 'Attendance is open for your next class.',
-    isRead: false,
-    createdAt: new Date(Date.now() - 1000 * 60 * 45).toISOString(),
-    actionUrl: '/student/home',
-  },
-  {
-    notificationId: 'notif-102',
-    type: 'permission_update',
-    title: 'Permission Update',
-    message: 'One of your permission requests was reviewed.',
-    isRead: false,
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 8).toISOString(),
-    actionUrl: '/student/permissions',
-  },
-  {
-    notificationId: 'notif-103',
-    type: 'announcement',
-    title: 'Announcement',
-    message: 'Welcome to the updated student dashboard.',
-    isRead: true,
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-    actionUrl: null,
-  },
-];
-
 /**
- * MOCK API: Fetches notifications for the logged-in student.
+ * Marks a specific notification as read in the backend.
  */
-export const getNotifications = (studentId: string): Promise<Notification[]> => {
-  const readIds = new Set(getReadIds(studentId));
-  const notifications = baseNotifications.map((notification) => ({
-    ...notification,
-    isRead: readIds.has(notification.notificationId) || notification.isRead,
-  }));
-
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve(notifications.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-    }, MOCK_DELAY);
-  });
+export const markNotificationRead = async (_userId: string, id: string): Promise<void> => {
+  try {
+    await api.markNotificationRead(id);
+  } catch (err) {
+    console.error('Failed to mark notification as read:', err);
+  }
 };
 
 /**
- * Marks a specific notification as read in local read-state.
+ * Marks all notifications as read in the backend.
  */
-export const markNotificationRead = (studentId: string, notificationId: string): Promise<void> => {
-  const ids = new Set(getReadIds(studentId));
-  ids.add(notificationId);
-  setReadIds(studentId, Array.from(ids));
-  return Promise.resolve();
-};
-
-/**
- * Marks all notifications as read for a student.
- */
-export const markAllRead = (studentId: string): Promise<void> => {
-  return getNotifications(studentId).then((notifications) => {
-    const ids = notifications.map((notification) => notification.notificationId);
-    setReadIds(studentId, ids);
-  });
+export const markAllRead = async (_user: { id: string, role: string }): Promise<void> => {
+  try {
+    await api.markAllNotificationsRead();
+  } catch (err) {
+    console.error('Failed to mark all notifications as read:', err);
+  }
 };

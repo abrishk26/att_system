@@ -1,14 +1,15 @@
 use axum::{Router, routing::{get, post, patch}};
-use crate::handlers::{static_handler, login_handler, refresh_handler, logout_handler, nfc_login_handler, students::*, instructors::*};
+use crate::handlers::{static_handler, login_handler, verify_handler, refresh_handler, logout_handler, nfc_login_handler, students::*, instructors::*, notifications::*};
 use crate::types::AppState;
 
 pub fn new(app_state: AppState) -> Router {
-    Router::new()
+    let api_routes = Router::new()
         // ── Auth ──────────────────────────────────────────────────────────────
         .route("/login", post(login_handler))
+        .route("/auth/verify", get(verify_handler))
         .route("/refresh", post(refresh_handler))
-        .route("/logout", post(logout_handler))                        // B-03
-        .route("/auth/login/nfc", post(nfc_login_handler))            // B-07
+        .route("/logout", post(logout_handler))
+        .route("/auth/login/nfc", post(nfc_login_handler))
 
         // ── Profile / Course / Class ──────────────────────────────────────────
         .route("/profile", get(get_profile))
@@ -16,11 +17,11 @@ pub fn new(app_state: AppState) -> Router {
         .route("/class/{class_id}", get(get_class_details))
 
         // ── Schedule ─────────────────────────────────────────────────────────
-        .route("/schedule", get(get_schedule_handler))                 // B-04
+        .route("/schedule", get(get_schedule_handler))
 
         // ── Instructor assignments ────────────────────────────────────────────
         .route("/instructor/assignments", get(get_instructor_assignments))
-        .route("/instructor/assignments/enriched", get(get_enriched_assignments_handler)) // B-08
+        .route("/instructor/assignments/enriched", get(get_enriched_assignments_handler))
 
         // ── Sessions ─────────────────────────────────────────────────────────
         .route("/session/create", post(create_session_handler))
@@ -33,12 +34,20 @@ pub fn new(app_state: AppState) -> Router {
         // ── Attendance records ────────────────────────────────────────────────
         .route("/record/create", post(create_record_handler))
         .route("/record/update", patch(mark_attendance_handler))
-        .route("/record/batch-update", patch(batch_update_attendance_handler)) // B-05
-        .route("/record/offline-sync", post(offline_sync_handler))    // B-11
+        .route("/record/batch-update", patch(batch_update_attendance_handler))
+        .route("/record/offline-sync", post(offline_sync_handler))
         .route("/record/{session_id}", get(get_records_with_student_info))
 
+        // ── Tap Log (NFC audit trail) ─────────────────────────────────────────
+        .route("/tap-log/{session_id}", get(get_tap_log_handler))
+
+        // ── Notifications ─────────────────────────────────────────────────────
+        .route("/notifications", get(get_notifications_handler))
+        .route("/notifications/{id}/read", patch(mark_notification_read_handler))
+        .route("/notifications/read-all", patch(mark_all_read_handler))
+
         // ── Permissions ───────────────────────────────────────────────────────
-        .route("/instructor/permissions", get(get_all_permissions_handler))       // B-02
+        .route("/instructor/permissions", get(get_all_permissions_handler))
         .route("/instructor/permissions/{id}", get(get_permissions_by_session))
         .route("/instructor/permissions/update/{id}", patch(update_permission_handler))
         .route("/student/permissions", get(get_student_permissions))
@@ -54,6 +63,12 @@ pub fn new(app_state: AppState) -> Router {
         .route("/student/courses", get(get_student_courses))
         .route("/student/dashboard-metrics", get(get_student_dashboard_metrics_handler))
 
+        // ── Admin / Department Head ───────────────────────────────────────────
+        .route("/admin/analytics", get(get_department_analytics_handler))
+        .fallback(|| async { (axum::http::StatusCode::NOT_FOUND, axum::Json(crate::types::ErrorResponse { message: "API endpoint not found".to_string() })) });
+
+    Router::new()
+        .nest("/api", api_routes)
         .fallback(static_handler)
         .with_state(app_state)
 }

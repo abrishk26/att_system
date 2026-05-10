@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { api } from '../../api';
 import type { Session } from '../../api';
 import type { AttendanceRecordWithStudent, Course, Class } from '../../api';
+import { exportToPDF } from '../../lib/exportUtils';
 import './Reports.css';
 
-type TimePeriod = 'all' | 'completed';
-type ExportFormat = 'csv' | 'json';
+type TimePeriod = 'daily' | 'weekly' | 'monthly' | 'all' | 'completed';
+type ExportFormat = 'csv' | 'json' | 'pdf';
 
 function isCompletedStatus(status: string) {
   return status === 'finished' || status === 'completed';
@@ -43,6 +44,37 @@ function toCSV(rows: Array<Record<string, string | number | null | undefined>>) 
   const headerLine = headers.map(escape).join(',');
   const lines = rows.map(r => headers.map(h => escape(r[h])).join(','));
   return [headerLine, ...lines].join('\n');
+}
+
+/** Returns a date N days ago from today */
+function daysAgo(n: number): Date {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/** Filter sessions by time period */
+function filterByTimePeriod(sessions: Session[], period: TimePeriod): Session[] {
+  const now = new Date();
+  switch (period) {
+    case 'daily': {
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      return sessions.filter(s => new Date(s.created_at) >= startOfDay);
+    }
+    case 'weekly': {
+      const weekAgo = daysAgo(7);
+      return sessions.filter(s => new Date(s.created_at) >= weekAgo);
+    }
+    case 'monthly': {
+      const monthAgo = daysAgo(30);
+      return sessions.filter(s => new Date(s.created_at) >= monthAgo);
+    }
+    case 'completed':
+      return sessions.filter(s => isCompletedStatus(s.status));
+    default:
+      return sessions;
+  }
 }
 
 async function enrichSessions(sessions: Session[]) {
@@ -84,17 +116,48 @@ function attendanceStatsFromRecords(records: AttendanceRecordWithStudent[]) {
   return { total, present, absent, attendancePct };
 }
 
+/** Export helper that supports csv, json, and pdf */
+function exportData(
+  name: string,
+  format: ExportFormat,
+  rows: Array<Record<string, any>>,
+  pdfTitle?: string,
+  pdfColumns?: { header: string; dataKey: string }[],
+) {
+  if (format === 'json') {
+    downloadText(`${name}.json`, JSON.stringify({ rows }, null, 2), 'application/json');
+  } else if (format === 'pdf' && pdfTitle && pdfColumns) {
+    exportToPDF(pdfTitle, pdfColumns, rows, name);
+  } else {
+    downloadText(`${name}.csv`, toCSV(rows), 'text/csv');
+  }
+}
+
 export default function Reports() {
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('all');
-  const [exportFormat, setExportFormat] = useState<ExportFormat>('csv');
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('pdf');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recent, setRecent] = useState<Array<{ name: string; at: string }>>([]);
 
   const loadBaseSessions = async () => {
     const all = await api.allSessions();
-    if (timePeriod === 'completed') return all.filter(s => isCompletedStatus(s.status));
-    return all;
+    let filtered = filterByTimePeriod(all, timePeriod);
+
+    // Apply custom date range if specified
+    if (dateFrom) {
+      const from = new Date(dateFrom);
+      filtered = filtered.filter(s => new Date(s.created_at) >= from);
+    }
+    if (dateTo) {
+      const to = new Date(dateTo);
+      to.setHours(23, 59, 59);
+      filtered = filtered.filter(s => new Date(s.created_at) <= to);
+    }
+
+    return filtered;
   };
 
   const exportDepartmentAttendanceSummary = async () => {
@@ -134,24 +197,24 @@ export default function Reports() {
       };
 
       const outRows = [
-        { metric: 'Total Sessions', value: sessions.length },
-        { metric: 'Export Sessions (capped)', value: slice.length },
-        { metric: 'Total Records', value: totalRecords },
-        { metric: 'Present Count', value: totalPresent },
-        { metric: 'Avg Attendance (%)', value: avgAttendance },
-        { metric: 'Completion Rate (%)', value: completionRate },
-        { metric: 'Excellent Sessions (>=90%)', value: distribution.excellent },
-        { metric: 'Good Sessions (80-89%)', value: distribution.good },
-        { metric: 'Fair Sessions (70-79%)', value: distribution.fair },
-        { metric: 'Poor Sessions (<70%)', value: distribution.poor },
+        { Metric: 'Total Sessions', Value: sessions.length },
+        { Metric: 'Export Sessions (capped)', Value: slice.length },
+        { Metric: 'Total Records', Value: totalRecords },
+        { Metric: 'Present Count', Value: totalPresent },
+        { Metric: 'Avg Attendance (%)', Value: avgAttendance },
+        { Metric: 'Completion Rate (%)', Value: completionRate },
+        { Metric: 'Excellent Sessions (>=90%)', Value: distribution.excellent },
+        { Metric: 'Good Sessions (80-89%)', Value: distribution.good },
+        { Metric: 'Fair Sessions (70-79%)', Value: distribution.fair },
+        { Metric: 'Poor Sessions (<70%)', Value: distribution.poor },
       ];
 
       const name = `department_attendance_summary_${timePeriod}_${Date.now()}`;
-      if (exportFormat === 'json') {
-        downloadText(`${name}.json`, JSON.stringify({ timePeriod, out: outRows }, null, 2), 'application/json');
-      } else {
-        downloadText(`${name}.csv`, toCSV(outRows), 'text/csv');
-      }
+      const pdfColumns = [
+        { header: 'Metric', dataKey: 'Metric' },
+        { header: 'Value', dataKey: 'Value' },
+      ];
+      exportData(name, exportFormat, outRows, `Department Attendance Summary (${timePeriod})`, pdfColumns);
 
       setRecent(prev => [{ name, at: new Date().toISOString() }, ...prev].slice(0, 8));
     } catch (e) {
@@ -200,19 +263,20 @@ export default function Reports() {
         const c = courses[i];
         const entry = byCourse.get(id)!;
         return {
-          course: c?.name ?? id,
-          course_id: id,
-          attendancePercent: entry.total > 0 ? Math.round((entry.present / entry.total) * 100) : 0,
-          sessions: entry.sessions,
+          Course: c?.name ?? id,
+          'Course ID': id,
+          'Attendance %': entry.total > 0 ? Math.round((entry.present / entry.total) * 100) : 0,
+          Sessions: entry.sessions,
         };
       });
 
       const name = `course_performance_${timePeriod}_${Date.now()}`;
-      if (exportFormat === 'json') {
-        downloadText(`${name}.json`, JSON.stringify({ timePeriod, rows }, null, 2), 'application/json');
-      } else {
-        downloadText(`${name}.csv`, toCSV(rows), 'text/csv');
-      }
+      const pdfColumns = [
+        { header: 'Course', dataKey: 'Course' },
+        { header: 'Attendance %', dataKey: 'Attendance %' },
+        { header: 'Sessions', dataKey: 'Sessions' },
+      ];
+      exportData(name, exportFormat, rows, `Course Performance Report (${timePeriod})`, pdfColumns);
 
       setRecent(prev => [{ name, at: new Date().toISOString() }, ...prev].slice(0, 8));
     } catch (e) {
@@ -265,20 +329,21 @@ export default function Reports() {
       }
 
       const rows = Array.from(byInstructor.values()).map(entry => ({
-        instructor: shortId(entry.instructor_id),
-        instructor_id: entry.instructor_id,
-        role: '—',
-        activeSessions: entry.activeSessions,
-        completedSessions: entry.completedSessions,
-        avgAttendancePercent: entry.total > 0 ? Math.round((entry.present / entry.total) * 100) : 0,
+        Instructor: shortId(entry.instructor_id),
+        'Instructor ID': entry.instructor_id,
+        'Active Sessions': entry.activeSessions,
+        'Completed Sessions': entry.completedSessions,
+        'Avg Attendance %': entry.total > 0 ? Math.round((entry.present / entry.total) * 100) : 0,
       }));
 
       const name = `staff_planning_${timePeriod}_${Date.now()}`;
-      if (exportFormat === 'json') {
-        downloadText(`${name}.json`, JSON.stringify({ timePeriod, rows }, null, 2), 'application/json');
-      } else {
-        downloadText(`${name}.csv`, toCSV(rows), 'text/csv');
-      }
+      const pdfColumns = [
+        { header: 'Instructor', dataKey: 'Instructor' },
+        { header: 'Active', dataKey: 'Active Sessions' },
+        { header: 'Completed', dataKey: 'Completed Sessions' },
+        { header: 'Avg Attendance', dataKey: 'Avg Attendance %' },
+      ];
+      exportData(name, exportFormat, rows, `Staff Planning Report (${timePeriod})`, pdfColumns);
 
       setRecent(prev => [{ name, at: new Date().toISOString() }, ...prev].slice(0, 8));
     } catch (e) {
@@ -308,29 +373,94 @@ export default function Reports() {
         const cls = classesById.get(s.class_id);
         const classLabel = cls ? `Year ${cls.year} · Section ${cls.section}` : '';
         return {
-          session_id: s.id,
-          instructor_id: shortId(s.instructor_id),
-          course: course?.name ?? s.course_id,
-          classLabel,
-          attendancePercent: st.attendancePct,
-          status: s.status,
-          flag: st.attendancePct < 70 ? 'LOW' : '',
+          'Session ID': s.id,
+          Instructor: shortId(s.instructor_id),
+          Course: course?.name ?? s.course_id,
+          Class: classLabel,
+          'Attendance %': st.attendancePct,
+          Status: s.status,
+          Flag: st.attendancePct < 70 ? 'LOW' : '',
         };
       });
 
-      const low = auditRows.filter(r => r.flag === 'LOW').length;
-
       const name = `audit_evaluation_${timePeriod}_${Date.now()}`;
-      const payload =
-        exportFormat === 'json'
-          ? { timePeriod, lowFlagCount: low, rows: auditRows }
-          : null;
+      const pdfColumns = [
+        { header: 'Course', dataKey: 'Course' },
+        { header: 'Class', dataKey: 'Class' },
+        { header: 'Attendance %', dataKey: 'Attendance %' },
+        { header: 'Status', dataKey: 'Status' },
+        { header: 'Flag', dataKey: 'Flag' },
+      ];
+      exportData(name, exportFormat, auditRows, `Audit & Evaluation Report (${timePeriod})`, pdfColumns);
 
-      if (exportFormat === 'json') {
-        downloadText(`${name}.json`, JSON.stringify(payload, null, 2), 'application/json');
-      } else {
-        downloadText(`${name}.csv`, toCSV(auditRows), 'text/csv');
+      setRecent(prev => [{ name, at: new Date().toISOString() }, ...prev].slice(0, 8));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to generate report');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** New: Per-student attendance report */
+  const exportPerStudentReport = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const sessions = await loadBaseSessions();
+      const completed = sessions.filter(s => isCompletedStatus(s.status));
+      const slice = completed.slice(0, 40);
+
+      const recordsBySession = await Promise.all(
+        slice.map(s => api.sessionRecords(s.id).catch(() => [] as AttendanceRecordWithStudent[]))
+      );
+
+      const studentMap = new Map<string, {
+        student_name: string; nfc_id: string; total: number;
+        present: number; absent: number; late: number; excused: number;
+      }>();
+
+      for (const recs of recordsBySession) {
+        for (const rec of recs) {
+          if (!studentMap.has(rec.student_id)) {
+            studentMap.set(rec.student_id, {
+              student_name: rec.student_name, nfc_id: rec.nfc_id,
+              total: 0, present: 0, absent: 0, late: 0, excused: 0,
+            });
+          }
+          const entry = studentMap.get(rec.student_id)!;
+          entry.total += 1;
+          if (rec.status === 'present') entry.present += 1;
+          else if (rec.status === 'absent') entry.absent += 1;
+          else if (rec.status === 'late') entry.late += 1;
+          else if (rec.status === 'excused') entry.excused += 1;
+        }
       }
+
+      const rows = Array.from(studentMap.values()).map(entry => ({
+        'Student Name': entry.student_name,
+        'NFC ID': entry.nfc_id,
+        'Total Sessions': entry.total,
+        'Present': entry.present,
+        'Late': entry.late,
+        'Absent': entry.absent,
+        'Excused': entry.excused,
+        'Attendance %': entry.total > 0 ? Math.round(((entry.present + entry.late) / entry.total) * 100) : 0,
+      }));
+
+      rows.sort((a, b) => (b['Attendance %'] as number) - (a['Attendance %'] as number));
+
+      const name = `per_student_report_${timePeriod}_${Date.now()}`;
+      const pdfColumns = [
+        { header: 'Student Name', dataKey: 'Student Name' },
+        { header: 'NFC ID', dataKey: 'NFC ID' },
+        { header: 'Total', dataKey: 'Total Sessions' },
+        { header: 'Present', dataKey: 'Present' },
+        { header: 'Late', dataKey: 'Late' },
+        { header: 'Absent', dataKey: 'Absent' },
+        { header: 'Excused', dataKey: 'Excused' },
+        { header: 'Rate', dataKey: 'Attendance %' },
+      ];
+      exportData(name, exportFormat, rows, `Per-Student Attendance Report (${timePeriod})`, pdfColumns);
 
       setRecent(prev => [{ name, at: new Date().toISOString() }, ...prev].slice(0, 8));
     } catch (e) {
@@ -347,7 +477,7 @@ export default function Reports() {
       <div className="reports-header">
         <div>
           <h2>Reports &amp; Exports</h2>
-          <p className="page-sub">Generate attendance and performance reports</p>
+          <p className="page-sub">Generate attendance and performance reports with daily, weekly, monthly, or custom date ranges</p>
         </div>
       </div>
 
@@ -361,9 +491,32 @@ export default function Reports() {
               value={timePeriod}
               onChange={e => setTimePeriod(e.target.value as TimePeriod)}
             >
-              <option value="all">All sessions</option>
-              <option value="completed">Completed sessions</option>
+              <option value="daily">Today</option>
+              <option value="weekly">Last 7 Days</option>
+              <option value="monthly">Last 30 Days</option>
+              <option value="completed">Completed Only</option>
+              <option value="all">All Sessions</option>
             </select>
+          </label>
+
+          <label className="field">
+            <span className="field-label">From Date</span>
+            <input
+              type="date"
+              className="field-control"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+            />
+          </label>
+
+          <label className="field">
+            <span className="field-label">To Date</span>
+            <input
+              type="date"
+              className="field-control"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+            />
           </label>
 
           <label className="field">
@@ -373,6 +526,7 @@ export default function Reports() {
               value={exportFormat}
               onChange={e => setExportFormat(e.target.value as ExportFormat)}
             >
+              <option value="pdf">PDF</option>
               <option value="csv">CSV</option>
               <option value="json">JSON</option>
             </select>
@@ -409,6 +563,13 @@ export default function Reports() {
           description="Compliance and evaluation documentation"
           icon="🧾"
           onGenerate={exportAuditEvaluationReport}
+          disabled={!canGenerate}
+        />
+        <ReportTile
+          title="Per-Student Report"
+          description="Individual student attendance breakdown across all courses"
+          icon="🎓"
+          onGenerate={exportPerStudentReport}
           disabled={!canGenerate}
         />
       </div>
@@ -459,4 +620,3 @@ function ReportTile({
     </div>
   );
 }
-
