@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../AuthContext';
 import {
@@ -7,23 +7,38 @@ import {
     ShieldAlert,
     LogOut,
     Menu,
-    Bell,
     Search,
     ChevronRight,
     ChevronLeft,
     GraduationCap,
     X
 } from 'lucide-react';
+import { NotificationBell } from '../NotificationBell';
 
 export default function StudentLayout() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [isProfileOpen, setIsProfileOpen] = useState(false);
-    const { user, logout } = useAuth();
+    const { user, logout, isLoading } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
 
-    if (!user) return null;
+    useEffect(() => {
+        if (!isLoading) {
+            if (!user) {
+                navigate('/student/login', { replace: true });
+            } else if (user.role !== 'student' && user.role !== 'admin') {
+                // If instructor tries to access student portal, send them back
+                navigate('/instructor/dashboard', { replace: true });
+            }
+        }
+    }, [user, isLoading, navigate]);
+
+    if (isLoading || !user || (user.role !== 'student' && user.role !== 'admin')) return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+    );
 
     const studentName = `${user.first_name}${user.last_name ? ` ${user.last_name}` : ''}`;
 
@@ -132,10 +147,7 @@ export default function StudentLayout() {
                     </div>
 
                     <div className="flex items-center gap-4">
-                        <button className="relative p-2 rounded-xl text-slate-500 hover:bg-slate-50 hover:text-primary transition-all">
-                            <Bell size={20} />
-                            <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
-                        </button>
+                        <NotificationBell />
                         <div className="h-8 w-px bg-slate-200 hidden sm:block mx-1"></div>
                         <div className="relative">
                             <button

@@ -24,6 +24,7 @@ import InstructorCourses from './pages/instructor/CoursesPage';
 import InstructorAttendance from './pages/instructor/AttendancePage';
 import InstructorSettings from './pages/instructor/SettingsPage';
 import InstructorPermissions from './pages/instructor/PermissionsPage';
+import InstructorReports from './pages/instructor/ReportsPage';
 
 // Student imports
 import StudentLayout from './components/student/Layout';
@@ -67,6 +68,7 @@ export default function App() {
               <Route path="attendance" element={<InstructorAttendance />} />
               <Route path="settings" element={<InstructorSettings />} />
               <Route path="permissions" element={<InstructorPermissions />} />
+              <Route path="reports" element={<InstructorReports />} />
             </Route>
             <Route path="*" element={<Navigate to="/instructor/dashboard" replace />} />
           </Route>

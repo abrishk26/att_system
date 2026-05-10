@@ -6,7 +6,7 @@ use crate::helpers::internal_error;
 use uuid::Uuid;
 use diesel::{ExpressionMethods, QueryDsl};
 use serde::Serialize;
-use chrono::Utc;
+use chrono::{Utc, Datelike};
 
 const VALID_STATUSES: &[&str] = &["present", "absent", "late", "excused"];
 
@@ -254,6 +254,23 @@ pub async fn update_permission_handler(
             .set(attendance_record::status.eq("excused"))
             .execute(&mut conn).await;
     }
+
+    // Insert Notification for Student
+    if status != "pending" {
+        let status_text = if status == "accepted" { "approved" } else { "rejected" };
+        let notif = crate::models::NewNotification {
+            user_id: updated.student_id,
+            title: format!("Permission {}", status_text.to_uppercase()),
+            message: format!("Your permission request was {}.", status_text),
+            notification_type: "permission_update".into(),
+            action_url: Some("/student/permissions".into()),
+        };
+        let _ = diesel::insert_into(crate::schema::notifications::table)
+            .values(&notif)
+            .execute(&mut conn)
+            .await;
+    }
+
     Ok((StatusCode::OK, Json(updated)))
 }
 
@@ -350,4 +367,118 @@ pub async fn get_instructor_dashboard_metrics_handler(
         recs.into_iter().map(|r| r.student_id).collect::<std::collections::HashSet<_>>().len()
     } else { 0 };
     Ok((StatusCode::OK, Json(InstructorDashboardMetrics { stats: InstructorStats { active_courses: assignments.len(), total_sessions: all_sessions.len(), avg_attendance: avg, total_students }, trends, course_performance })))
+}
+
+/// GET /admin/analytics — aggregated department-wide analytics
+pub async fn get_department_analytics_handler(
+    State(state): State<AppState>,
+    _: AdminClaims,
+) -> Result<(StatusCode, Json<DepartmentAnalytics>), (StatusCode, Json<ErrorResponse>)> {
+    use diesel_async::RunQueryDsl;
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
+
+    // Load all finished sessions
+    let all_sessions = sessions::table.load::<Session>(&mut conn).await.map_err(internal_error)?;
+    let finished: Vec<&Session> = all_sessions.iter().filter(|s| s.status == "finished").collect();
+    let finished_ids: Vec<Uuid> = finished.iter().map(|s| s.id).collect();
+
+    // Unique instructors
+    let instructor_ids: std::collections::HashSet<Uuid> = all_sessions.iter().map(|s| s.instructor_id).collect();
+
+    // Load all attendance records for finished sessions
+    let all_records = if !finished_ids.is_empty() {
+        attendance_record::table.filter(attendance_record::session_id.eq_any(&finished_ids)).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?
+    } else { Vec::new() };
+
+    // Unique students
+    let student_ids: std::collections::HashSet<Uuid> = all_records.iter().map(|r| r.student_id).collect();
+
+    // Overall attendance rate
+    let total_records = all_records.len();
+    let total_present = all_records.iter().filter(|r| r.status == "present").count();
+    let avg_attendance_rate = if total_records > 0 { (total_present as f64 / total_records as f64) * 100.0 } else { 0.0 };
+
+    // Attendance by day of week
+    let days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    let mut day_stats: Vec<(usize, usize, usize)> = vec![(0, 0, 0); 7]; // (present, total, sessions)
+    for sess in &finished {
+        let day_idx = sess.created_at.weekday().num_days_from_monday() as usize;
+        if day_idx < 7 {
+            let sess_recs: Vec<&AttendanceRecord> = all_records.iter().filter(|r| r.session_id == sess.id).collect();
+            day_stats[day_idx].0 += sess_recs.iter().filter(|r| r.status == "present").count();
+            day_stats[day_idx].1 += sess_recs.len();
+            day_stats[day_idx].2 += 1;
+        }
+    }
+    let attendance_by_day: Vec<DayAttendance> = days.iter().enumerate().map(|(i, d)| {
+        let (p, t, s) = day_stats[i];
+        DayAttendance {
+            day: d.to_string(),
+            rate: if t > 0 { (p as f64 / t as f64) * 100.0 } else { 0.0 },
+            sessions: s,
+        }
+    }).collect();
+
+    // Course-level stats
+    let mut course_map: std::collections::HashMap<Uuid, (usize, usize, usize)> = std::collections::HashMap::new(); // (present, total, sessions)
+    for sess in &finished {
+        let sess_recs: Vec<&AttendanceRecord> = all_records.iter().filter(|r| r.session_id == sess.id).collect();
+        let e = course_map.entry(sess.course_id).or_insert((0, 0, 0));
+        e.0 += sess_recs.iter().filter(|r| r.status == "present").count();
+        e.1 += sess_recs.len();
+        e.2 += 1;
+    }
+
+    let mut course_stats: Vec<CourseAttendanceStat> = Vec::new();
+    for (course_id, (p, t, s)) in &course_map {
+        let course_name = match state.client.request(Method::GET, format!("http://127.0.0.1:3000/course/{}", course_id)).send().await {
+            Ok(r) if r.status() == StatusCode::OK => r.json::<Course>().await.ok().map(|c| c.name),
+            _ => None,
+        };
+        course_stats.push(CourseAttendanceStat {
+            course_id: *course_id,
+            course_name,
+            attendance_rate: if *t > 0 { (*p as f64 / *t as f64) * 100.0 } else { 0.0 },
+            session_count: *s,
+        });
+    }
+    course_stats.sort_by(|a, b| b.attendance_rate.partial_cmp(&a.attendance_rate).unwrap_or(std::cmp::Ordering::Equal));
+
+    let top_courses: Vec<CourseAttendanceStat> = course_stats.iter().take(5).cloned().collect();
+    let bottom_courses: Vec<CourseAttendanceStat> = course_stats.iter().rev().take(5).cloned().collect();
+
+    // Instructor breakdown
+    let mut instructor_map: std::collections::HashMap<Uuid, (usize, usize, usize)> = std::collections::HashMap::new();
+    for sess in &finished {
+        let sess_recs: Vec<&AttendanceRecord> = all_records.iter().filter(|r| r.session_id == sess.id).collect();
+        let e = instructor_map.entry(sess.instructor_id).or_insert((0, 0, 0));
+        e.0 += sess_recs.iter().filter(|r| r.status == "present").count();
+        e.1 += sess_recs.len();
+        e.2 += 1;
+    }
+
+    let mut instructor_breakdown = Vec::new();
+    for (iid, (p, t, s)) in &instructor_map {
+        let name = match state.client.request(Method::GET, format!("http://127.0.0.1:3000/user/{}", iid)).send().await {
+            Ok(r) if r.status() == StatusCode::OK => r.json::<UserProfile>().await.ok().map(|u| format!("{} {}", u.first_name, u.last_name.unwrap_or_default())),
+            _ => None,
+        };
+        instructor_breakdown.push(InstructorBreakdown {
+            instructor_id: *iid,
+            instructor_name: name,
+            sessions: *s,
+            avg_attendance: if *t > 0 { (*p as f64 / *t as f64) * 100.0 } else { 0.0 },
+        });
+    }
+
+    Ok((StatusCode::OK, Json(DepartmentAnalytics {
+        total_students: student_ids.len(),
+        total_sessions: all_sessions.len(),
+        total_instructors: instructor_ids.len(),
+        avg_attendance_rate,
+        attendance_by_day,
+        top_courses,
+        bottom_courses,
+        instructor_breakdown,
+    })))
 }

@@ -27,6 +27,12 @@ pub struct Tokens {
     pub role: String,
 }
 
+#[derive(Serialize)]
+pub struct UserVerifyResponse {
+    pub id: String,
+    pub role: String,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub message: String,
@@ -134,6 +140,7 @@ where
         let claims = ClaimsExtractor::from_request_parts(parts, state).await?;
 
         let role_lower = claims.role.to_lowercase();
+        log::info!("Checking instructor access: user_id={}, role={}", claims.user_id, role_lower);
         if role_lower != "instructor" && role_lower != "admin" {
             log::warn!("Instructor access denied: user_id={}, role={}", claims.user_id, claims.role);
             return Err((
@@ -162,6 +169,7 @@ where
         let claims = ClaimsExtractor::from_request_parts(parts, state).await?;
 
         let role_lower = claims.role.to_lowercase();
+        log::info!("Checking student access: user_id={}, role={}", claims.user_id, role_lower);
         if role_lower != "student" && role_lower != "admin" {
             log::warn!("Student access denied: user_id={}, role={}", claims.user_id, claims.role);
             return Err((
@@ -173,5 +181,33 @@ where
         }
 
         Ok(StudentClaims { user_id: claims.user_id })
+    }
+}
+
+pub struct AdminClaims {
+    pub user_id: String,
+}
+
+impl<S> FromRequestParts<S> for AdminClaims
+where
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, Json<ErrorResponse>);
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let claims = ClaimsExtractor::from_request_parts(parts, state).await?;
+
+        let role_lower = claims.role.to_lowercase();
+        if role_lower != "admin" {
+            log::warn!("Admin access denied: user_id={}, role={}", claims.user_id, claims.role);
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(ErrorResponse {
+                    message: "access denied: admin role required".to_string(),
+                }),
+            ));
+        }
+
+        Ok(AdminClaims { user_id: claims.user_id })
     }
 }

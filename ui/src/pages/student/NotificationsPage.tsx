@@ -6,7 +6,7 @@ import { ArrowLeft, CheckCheck } from 'lucide-react';
 
 const NotificationsPage: React.FC = () => {
   const { studentId } = useOutletContext<{ studentId: string }>();
-  const { notifications, markAllRead, markRead, unreadCount, isLoading } = useNotifs(studentId);
+  const { notifications, markAllRead, markRead, unreadCount, isLoading } = useNotifs({ id: studentId, role: 'student' });
   const navigate = useNavigate();
 
   const handleMarkAllRead = async () => {
@@ -42,7 +42,7 @@ const NotificationsPage: React.FC = () => {
       ) : (
         <div className="space-y-2">
           {notifications.map(notif => (
-            <NotificationListItem key={notif.notificationId} notification={notif} onRead={markRead} />
+            <NotificationListItem key={notif.id} notification={notif} onRead={markRead} />
           ))}
         </div>
       )}

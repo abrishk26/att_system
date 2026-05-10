@@ -10,7 +10,7 @@ interface TopBarProps {
 
 export const TopBar: React.FC<TopBarProps> = ({ studentName, studentId = 'student-001' }) => {
   const navigate = useNavigate();
-  const { unreadCount } = useNotifs(studentId);
+  const { unreadCount } = useNotifs({ id: studentId, role: 'student' });
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',

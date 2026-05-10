@@ -6,6 +6,31 @@ use chrono::{DateTime, Utc};
 // ── DB Models ─────────────────────────────────────────────────────────────────
 
 #[derive(Queryable, Selectable, Insertable, Serialize, Deserialize, Debug, Clone)]
+#[diesel(table_name = crate::schema::notifications)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct Notification {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub title: String,
+    pub message: String,
+    pub notification_type: String,
+    pub is_read: bool,
+    pub action_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Insertable, Serialize, Deserialize, Debug, Clone)]
+#[diesel(table_name = crate::schema::notifications)]
+pub struct NewNotification {
+    pub user_id: Uuid,
+    pub title: String,
+    pub message: String,
+    pub notification_type: String,
+    pub action_url: Option<String>,
+}
+
+
+#[derive(Queryable, Selectable, Insertable, Serialize, Deserialize, Debug, Clone)]
 #[diesel(table_name = crate::schema::permissions)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Permission {
@@ -48,6 +73,68 @@ pub struct TokenDenylist {
     pub jti: String,
     pub revoked_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Queryable, Selectable, Insertable, Serialize, Deserialize, Debug, Clone)]
+#[diesel(table_name = crate::schema::tap_log)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct TapLog {
+    pub id: Uuid,
+    pub nfc_id: String,
+    pub session_id: Uuid,
+    pub student_id: Option<Uuid>,
+    pub success: bool,
+    pub reason: Option<String>,
+    pub tapped_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TapLogResponse {
+    pub id: Uuid,
+    pub nfc_id: String,
+    pub session_id: Uuid,
+    pub student_id: Option<Uuid>,
+    pub student_name: Option<String>,
+    pub success: bool,
+    pub reason: Option<String>,
+    pub tapped_at: DateTime<Utc>,
+}
+
+// ── Department Analytics types ───────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DepartmentAnalytics {
+    pub total_students: usize,
+    pub total_sessions: usize,
+    pub total_instructors: usize,
+    pub avg_attendance_rate: f64,
+    pub attendance_by_day: Vec<DayAttendance>,
+    pub top_courses: Vec<CourseAttendanceStat>,
+    pub bottom_courses: Vec<CourseAttendanceStat>,
+    pub instructor_breakdown: Vec<InstructorBreakdown>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DayAttendance {
+    pub day: String,
+    pub rate: f64,
+    pub sessions: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CourseAttendanceStat {
+    pub course_id: Uuid,
+    pub course_name: Option<String>,
+    pub attendance_rate: f64,
+    pub session_count: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct InstructorBreakdown {
+    pub instructor_id: Uuid,
+    pub instructor_name: Option<String>,
+    pub sessions: usize,
+    pub avg_attendance: f64,
 }
 
 // ── Enriched response types ───────────────────────────────────────────────────

@@ -7,14 +7,21 @@ import {
   Search,
   LogOut
 } from 'lucide-react';
+import { NotificationBell } from '../NotificationBell';
 
 export default function Layout() {
-  const { token, user, logout } = useAuth();
+  const { token, user, logout, isLoading } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const navigate = useNavigate();
 
-  if (!token) return <Navigate to="/admin/login" replace />;
+  if (isLoading) return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+    </div>
+  );
+
+  if (!token || !user) return <Navigate to="/admin/login" replace />;
 
   const handleLogout = () => {
     logout();
@@ -49,6 +56,7 @@ export default function Layout() {
           </div>
 
           <div className="flex items-center gap-4">
+            <NotificationBell />
             <div className="h-8 w-px bg-slate-100 hidden sm:block mx-1"></div>
 
             <div className="flex items-center gap-3">
