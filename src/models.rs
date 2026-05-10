@@ -208,6 +208,14 @@ pub struct BatchUpdateResult {
     pub record: Option<AttendanceRecordWithStudent>,
 }
 
+#[derive(Serialize)]
+pub struct BatchUpdateResponse {
+    pub processed: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub results: Vec<BatchUpdateResult>,
+}
+
 #[derive(Deserialize)]
 pub struct OfflineSyncRecord {
     pub client_id: Uuid,

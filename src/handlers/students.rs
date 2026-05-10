@@ -138,10 +138,26 @@ pub async fn batch_update_attendance_handler(
     State(state): State<AppState>,
     _: InstructorClaims,
     Json(payload): Json<BatchUpdateRequest>,
-) -> Result<(StatusCode, Json<Vec<AttendanceRecordWithStudent>>), (StatusCode, Json<ErrorResponse>)> {
+) -> Result<(StatusCode, Json<BatchUpdateResponse>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
-    let mut conn = state.pool.get().await.map_err(internal_error)?;
-    let mut results: Vec<AttendanceRecordWithStudent> = Vec::new();
+    use diesel_async::AsyncConnection;
+    use diesel_async::scoped_futures::ScopedFutureExt;
+    use diesel::OptionalExtension;
+
+    // Phase 1 ── status validation + HTTP student-profile lookup (no DB yet) ─
+    // Business-logic failures (invalid status, unknown nfc_id) are classified
+    // here so they never enter the transaction.
+
+    struct Candidate {
+        nfc_id: String,
+        new_status: String,
+        student_id: Uuid,
+        student_name: String,
+        profile_nfc_id: String,
+    }
+
+    let mut early_results: Vec<BatchUpdateResult> = Vec::new();
+    let mut candidates: Vec<Candidate> = Vec::new();
 
     for item in &payload.updates {
         if validate_status(&item.status).is_err() {
@@ -183,9 +199,128 @@ pub async fn batch_update_attendance_handler(
                 id: rec.id, student_id: rec.student_id, session_id: rec.session_id,
                 status: rec.status, student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()), nfc_id: sp.nfc_id.clone(),
             });
+            continue;
+        }
+
+        match resp.json::<StudentProfile>().await {
+            Ok(sp) => candidates.push(Candidate {
+                nfc_id: item.nfc_id.clone(),
+                new_status: item.status.clone(),
+                student_id: sp.id,
+                student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()),
+                profile_nfc_id: sp.nfc_id,
+            }),
+            Err(_) => early_results.push(BatchUpdateResult {
+                nfc_id: item.nfc_id.clone(),
+                result: "failed".into(),
+                reason: Some("failed to parse student profile".into()),
+                record: None,
+            }),
         }
     }
-    Ok((StatusCode::OK, Json(results)))
+
+    // Phase 2 ── single DB transaction for all resolved candidates ────────────
+    //
+    // "not found in session" and "already same status" are classified inside the
+    // transaction but pushed to `out` — they do NOT abort it. Only real diesel
+    // errors propagate via `?` and trigger a rollback of all updates in this batch.
+
+    let session_id = payload.session_id;
+
+    // Flatten into owned tuples so the async closure is 'static.
+    let candidate_rows: Vec<(String, String, Uuid, String, String)> = candidates
+        .into_iter()
+        .map(|c| (c.nfc_id, c.new_status, c.student_id, c.student_name, c.profile_nfc_id))
+        .collect();
+
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
+
+    let tx_results: Vec<BatchUpdateResult> = if candidate_rows.is_empty() {
+        Vec::new()
+    } else {
+        conn.transaction::<Vec<BatchUpdateResult>, diesel::result::Error, _>(|conn| {
+            async move {
+                let mut out: Vec<BatchUpdateResult> = Vec::new();
+                for (nfc_id, new_status, student_id, student_name, profile_nfc_id) in candidate_rows {
+                    let existing: Option<AttendanceRecord> = attendance_record::table
+                        .filter(
+                            attendance_record::session_id
+                                .eq(session_id)
+                                .and(attendance_record::student_id.eq(student_id)),
+                        )
+                        .get_result::<AttendanceRecord>(conn)
+                        .await
+                        .optional()?; // Ok(None) on NotFound; propagates real DB errors
+
+                    match existing {
+                        None => out.push(BatchUpdateResult {
+                            nfc_id,
+                            result: "failed".into(),
+                            reason: Some("nfc_id not found in session".into()),
+                            record: None,
+                        }),
+                        Some(rec) if rec.status == new_status => out.push(BatchUpdateResult {
+                            nfc_id,
+                            result: "skipped".into(),
+                            reason: None,
+                            record: Some(AttendanceRecordWithStudent {
+                                id: rec.id,
+                                student_id: rec.student_id,
+                                session_id: rec.session_id,
+                                status: rec.status,
+                                student_name,
+                                nfc_id: profile_nfc_id,
+                            }),
+                        }),
+                        Some(_) => {
+                            let updated = diesel::update(attendance_record::table)
+                                .filter(
+                                    attendance_record::session_id
+                                        .eq(session_id)
+                                        .and(attendance_record::student_id.eq(student_id)),
+                                )
+                                .set(attendance_record::status.eq(&new_status))
+                                .get_result::<AttendanceRecord>(conn)
+                                .await?; // propagates DB error → rolls back entire transaction
+                            out.push(BatchUpdateResult {
+                                nfc_id,
+                                result: "success".into(),
+                                reason: None,
+                                record: Some(AttendanceRecordWithStudent {
+                                    id: updated.id,
+                                    student_id: updated.student_id,
+                                    session_id: updated.session_id,
+                                    status: updated.status,
+                                    student_name,
+                                    nfc_id: profile_nfc_id,
+                                }),
+                            });
+                        }
+                    }
+                }
+                Ok(out)
+            }
+            .scope_boxed()
+        })
+        .await
+        .map_err(internal_error)?
+    };
+
+    // Phase 3 ── merge early failures with transaction outcomes ───────────────
+    let mut all_results = early_results;
+    all_results.extend(tx_results);
+
+    let processed = all_results.iter().filter(|r| r.result == "success").count();
+    let skipped   = all_results.iter().filter(|r| r.result == "skipped").count();
+    let failed    = all_results.iter().filter(|r| r.result == "failed").count();
+
+    let status_code = if processed > 0 || skipped > 0 {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+
+    Ok((status_code, Json(BatchUpdateResponse { processed, skipped, failed, results: all_results })))
 }
 
 /// POST /record/offline-sync — B-11: idempotent batch NFC replay
