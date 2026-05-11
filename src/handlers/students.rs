@@ -157,6 +157,7 @@ pub async fn batch_update_attendance_handler(
 
     let mut early_results: Vec<BatchUpdateResult> = Vec::new();
     let mut candidates: Vec<Candidate> = Vec::new();
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
 
     for item in &payload.updates {
         if validate_status(&item.status).is_err() {

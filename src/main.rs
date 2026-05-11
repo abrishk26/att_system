@@ -21,7 +21,11 @@ async fn main() {
     // set up connection pool
     let config = AsyncDieselConnectionManager::<diesel_async::AsyncPgConnection>::new(db_url);
     let pool = bb8::Pool::builder().build(config).await.unwrap();
-    let client = ClientBuilder::new().build().unwrap();
+    let client = ClientBuilder::new()
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
     let jwt_secret = b"raw_llkey_hastobeverylongtobestrongbuttheymakeitatruntime".to_vec();
     let app_state = AppState { client, pool, jwt_secret };
 
