@@ -144,10 +144,9 @@ pub async fn batch_update_attendance_handler(
     use diesel_async::scoped_futures::ScopedFutureExt;
     use diesel::OptionalExtension;
 
-    // Phase 1 ── status validation + HTTP student-profile lookup (no DB yet) ─
-    // Business-logic failures (invalid status, unknown nfc_id) are classified
-    // here so they never enter the transaction.
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
 
+    // Phase 1 ── status validation + HTTP student-profile lookup ─
     struct Candidate {
         nfc_id: String,
         new_status: String,
@@ -162,37 +161,29 @@ pub async fn batch_update_attendance_handler(
 
     for item in &payload.updates {
         if validate_status(&item.status).is_err() {
+            log_tap(&mut conn, &item.nfc_id, payload.session_id, None, false, Some(format!("invalid status '{}'", item.status))).await;
             early_results.push(BatchUpdateResult {
                 nfc_id: item.nfc_id.clone(),
                 result: "failed".into(),
-                reason: Some(format!(
-                    "invalid status '{}'; must be one of: present, absent, late, excused",
-                    item.status
-                )),
+                reason: Some(format!("invalid status '{}'", item.status)),
                 record: None,
             });
             continue;
         }
-
-        let resp = state
-            .client
-            .request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", item.nfc_id))
-            .send()
-            .await
-            .map_err(internal_error)?;
-
-        if !resp.status().is_success() {
+        let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", item.nfc_id)).send().await.map_err(internal_error)?;
+        if r.status() != StatusCode::OK {
+            log_tap(&mut conn, &item.nfc_id, payload.session_id, None, false, Some("student not found".into())).await;
             early_results.push(BatchUpdateResult {
                 nfc_id: item.nfc_id.clone(),
                 result: "failed".into(),
-                reason: Some("nfc_id not recognised".into()),
+                reason: Some("student not found".into()),
                 record: None,
             });
             continue;
         }
-
-        let sp = match resp.json::<StudentProfile>().await {
-            Ok(s) => s,
+        
+        let sp = match r.json::<StudentProfile>().await { 
+            Ok(s) => s, 
             Err(_) => {
                 early_results.push(BatchUpdateResult {
                     nfc_id: item.nfc_id.clone(),
@@ -203,55 +194,6 @@ pub async fn batch_update_attendance_handler(
                 continue;
             }
         };
-
-        // Check for duplicate
-        let existing = attendance_record::table
-            .filter(attendance_record::session_id.eq(payload.session_id).and(attendance_record::student_id.eq(sp.id)))
-            .get_result::<AttendanceRecord>(&mut conn)
-            .await
-            .ok();
-
-        if let Some(ref rec) = existing {
-            if rec.status == "present" && item.status == "present" {
-                log_tap(&mut conn, &item.nfc_id, payload.session_id, Some(sp.id), false, Some("duplicate tap".into())).await;
-                early_results.push(BatchUpdateResult {
-                    nfc_id: item.nfc_id.clone(),
-                    result: "skipped".into(),
-                    reason: None,
-                    record: Some(AttendanceRecordWithStudent {
-                        id: rec.id,
-                        student_id: rec.student_id,
-                        session_id: rec.session_id,
-                        status: rec.status.clone(),
-                        student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()),
-                        nfc_id: sp.nfc_id.clone(),
-                    }),
-                });
-                continue;
-            }
-        }
-
-        let updated = diesel::update(attendance_record::table)
-            .filter(attendance_record::session_id.eq(payload.session_id).and(attendance_record::student_id.eq(sp.id)))
-            .set(attendance_record::status.eq(&item.status))
-            .get_result::<AttendanceRecord>(&mut conn).await;
-        if let Ok(rec) = updated {
-            log_tap(&mut conn, &item.nfc_id, payload.session_id, Some(sp.id), true, None).await;
-            early_results.push(BatchUpdateResult {
-                nfc_id: item.nfc_id.clone(),
-                result: "success".into(),
-                reason: None,
-                record: Some(AttendanceRecordWithStudent {
-                    id: rec.id,
-                    student_id: rec.student_id,
-                    session_id: rec.session_id,
-                    status: rec.status,
-                    student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()),
-                    nfc_id: sp.nfc_id.clone(),
-                }),
-            });
-            continue;
-        }
 
         candidates.push(Candidate {
             nfc_id: item.nfc_id.clone(),

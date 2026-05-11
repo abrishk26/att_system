@@ -44,9 +44,37 @@ pub async fn update_session_handler(
 ) -> Result<(StatusCode, Json<Session>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
+
     let session = diesel::update(sessions::table.find(payload.session_id))
-        .set(sessions::status.eq(payload.status))
-        .get_result::<Session>(&mut conn).await.map_err(internal_error)?;
+        .set(sessions::status.eq(&payload.status))
+        .get_result::<Session>(&mut conn)
+        .await
+        .map_err(internal_error)?;
+
+    // Notify absent students when session closes
+    if payload.status == "finished" {
+        let absent_records = attendance_record::table
+            .filter(attendance_record::session_id.eq(payload.session_id))
+            .filter(attendance_record::status.eq("absent"))
+            .load::<AttendanceRecord>(&mut conn)
+            .await
+            .unwrap_or_default();
+
+        for rec in &absent_records {
+            let notif = crate::models::NewNotification {
+                user_id: rec.student_id,
+                title: "Absence Recorded".into(),
+                message: "You were marked absent for a session. Submit a permission request if you have a valid reason.".into(),
+                notification_type: "absence_recorded".into(),
+                action_url: Some("/student/permissions".into()),
+            };
+            let _ = diesel::insert_into(crate::schema::notifications::table)
+                .values(&notif)
+                .execute(&mut conn)
+                .await;
+        }
+    }
+
     Ok((StatusCode::OK, Json(session)))
 }
 
@@ -78,6 +106,22 @@ pub async fn create_record_handler(
         status: "absent".to_string(), client_id: None,
     }).collect();
     diesel::insert_into(attendance_record::table).values(&new_records).execute(&mut conn).await.map_err(internal_error)?;
+
+    // Notify students when session opens
+    for s in &new_records {
+        let notif = crate::models::NewNotification {
+            user_id: s.student_id,
+            title: "Session Started".into(),
+            message: "Your attendance session is now open. Tap your NFC card to check in.".into(),
+            notification_type: "session_open".into(),
+            action_url: None,
+        };
+        let _ = diesel::insert_into(crate::schema::notifications::table)
+            .values(&notif)
+            .execute(&mut conn)
+            .await;
+    }
+
     Ok((StatusCode::CREATED, Json(new_records)))
 }
 

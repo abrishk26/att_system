@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::{
     models::Notification,
     schema::notifications,
-    types::{AppState, ClaimsExtractor, ErrorResponse},
+    types::{AppState, ClaimsExtractor, ErrorResponse, InstructorClaims},
 };
 
 fn internal_error<E: std::fmt::Display>(err: E) -> (StatusCode, Json<ErrorResponse>) {
@@ -80,4 +80,64 @@ pub async fn mark_all_read_handler(
         .map_err(internal_error)?;
 
     Ok(StatusCode::OK)
+}
+
+#[derive(serde::Deserialize)]
+pub struct SendAnnouncementRequest {
+    pub session_id: uuid::Uuid,
+    pub title: String,
+    pub message: String,
+}
+
+pub async fn send_announcement_handler(
+    State(state): State<AppState>,
+    InstructorClaims { user_id }: InstructorClaims,
+    Json(payload): Json<SendAnnouncementRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ErrorResponse>)> {
+    use diesel_async::RunQueryDsl;
+    use diesel::ExpressionMethods;
+    use crate::schema::{sessions, attendance_record};
+
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
+    let instructor_uuid = uuid::Uuid::parse_str(&user_id).map_err(|_| {
+        (StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "invalid user id".into() }))
+    })?;
+
+    // Verify the session belongs to this instructor
+    let session = sessions::table
+        .filter(crate::schema::sessions::id.eq(payload.session_id))
+        .filter(crate::schema::sessions::instructor_id.eq(instructor_uuid))
+        .get_result::<crate::models::Session>(&mut conn)
+        .await
+        .map_err(|_| (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse { message: "session not found or not owned by you".into() }),
+        ))?;
+
+    // Get all students in this session from attendance_record
+    let records = attendance_record::table
+        .filter(attendance_record::session_id.eq(session.id))
+        .load::<crate::models::AttendanceRecord>(&mut conn)
+        .await
+        .map_err(internal_error)?;
+
+    let count = records.len();
+    for rec in &records {
+        let notif = crate::models::NewNotification {
+            user_id: rec.student_id,
+            title: payload.title.clone(),
+            message: payload.message.clone(),
+            notification_type: "announcement".into(),
+            action_url: None,
+        };
+        let _ = diesel::insert_into(crate::schema::notifications::table)
+            .values(&notif)
+            .execute(&mut conn)
+            .await;
+    }
+
+    Ok((StatusCode::OK, Json(serde_json::json!({
+        "message": "Announcement sent",
+        "sent": count
+    }))))
 }
