@@ -1,5 +1,15 @@
 use axum::{Router, routing::{get, post, patch}};
-use crate::handlers::{static_handler, login_handler, verify_handler, refresh_handler, logout_handler, nfc_login_handler, students::*, instructors::*, notifications::*};
+use crate::handlers::{
+    static_handler, login_handler, verify_handler, refresh_handler, logout_handler, nfc_login_handler,
+    students::*,
+    instructors::*,
+    notifications::{
+        get_notifications_handler,
+        mark_notification_read_handler,
+        mark_all_read_handler,
+        send_announcement_handler,
+    },
+};
 use crate::types::AppState;
 
 pub fn new(app_state: AppState) -> Router {
@@ -45,6 +55,7 @@ pub fn new(app_state: AppState) -> Router {
         .route("/notifications", get(get_notifications_handler))
         .route("/notifications/{id}/read", patch(mark_notification_read_handler))
         .route("/notifications/read-all", patch(mark_all_read_handler))
+        .route("/notifications/send", post(send_announcement_handler))
 
         // ── Permissions ───────────────────────────────────────────────────────
         .route("/instructor/permissions", get(get_all_permissions_handler))
