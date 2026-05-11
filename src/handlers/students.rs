@@ -374,6 +374,7 @@ pub async fn create_permission_handler(
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
     let mut session_id = None; let mut description = None; let mut img_url = None;
+    tokio::fs::create_dir_all("uploads").await.map_err(internal_error)?;
     while let Some(field) = multipart.next_field().await.map_err(internal_error)? {
         let name = field.name().unwrap_or_default().to_string();
         if name == "session_id" { let d = field.text().await.map_err(internal_error)?; session_id = Some(Uuid::parse_str(&d).map_err(internal_error)?); }
