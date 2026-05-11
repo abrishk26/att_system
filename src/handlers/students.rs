@@ -158,18 +158,51 @@ pub async fn batch_update_attendance_handler(
 
     let mut early_results: Vec<BatchUpdateResult> = Vec::new();
     let mut candidates: Vec<Candidate> = Vec::new();
+    let mut conn = state.pool.get().await.map_err(internal_error)?;
 
     for item in &payload.updates {
         if validate_status(&item.status).is_err() {
-            log_tap(&mut conn, &item.nfc_id, payload.session_id, None, false, Some(format!("invalid status '{}'", item.status))).await;
+            early_results.push(BatchUpdateResult {
+                nfc_id: item.nfc_id.clone(),
+                result: "failed".into(),
+                reason: Some(format!(
+                    "invalid status '{}'; must be one of: present, absent, late, excused",
+                    item.status
+                )),
+                record: None,
+            });
             continue;
         }
-        let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", item.nfc_id)).send().await.map_err(internal_error)?;
-        if r.status() != StatusCode::OK {
-            log_tap(&mut conn, &item.nfc_id, payload.session_id, None, false, Some("student not found".into())).await;
+
+        let resp = state
+            .client
+            .request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", item.nfc_id))
+            .send()
+            .await
+            .map_err(internal_error)?;
+
+        if !resp.status().is_success() {
+            early_results.push(BatchUpdateResult {
+                nfc_id: item.nfc_id.clone(),
+                result: "failed".into(),
+                reason: Some("nfc_id not recognised".into()),
+                record: None,
+            });
             continue;
         }
-        let sp = match r.json::<StudentProfile>().await { Ok(s) => s, Err(_) => continue };
+
+        let sp = match resp.json::<StudentProfile>().await {
+            Ok(s) => s,
+            Err(_) => {
+                early_results.push(BatchUpdateResult {
+                    nfc_id: item.nfc_id.clone(),
+                    result: "failed".into(),
+                    reason: Some("failed to parse student profile".into()),
+                    record: None,
+                });
+                continue;
+            }
+        };
 
         // Check for duplicate
         let existing = attendance_record::table
@@ -181,9 +214,18 @@ pub async fn batch_update_attendance_handler(
         if let Some(ref rec) = existing {
             if rec.status == "present" && item.status == "present" {
                 log_tap(&mut conn, &item.nfc_id, payload.session_id, Some(sp.id), false, Some("duplicate tap".into())).await;
-                results.push(AttendanceRecordWithStudent {
-                    id: rec.id, student_id: rec.student_id, session_id: rec.session_id,
-                    status: rec.status.clone(), student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()), nfc_id: sp.nfc_id.clone(),
+                early_results.push(BatchUpdateResult {
+                    nfc_id: item.nfc_id.clone(),
+                    result: "skipped".into(),
+                    reason: None,
+                    record: Some(AttendanceRecordWithStudent {
+                        id: rec.id,
+                        student_id: rec.student_id,
+                        session_id: rec.session_id,
+                        status: rec.status.clone(),
+                        student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()),
+                        nfc_id: sp.nfc_id.clone(),
+                    }),
                 });
                 continue;
             }
@@ -195,28 +237,29 @@ pub async fn batch_update_attendance_handler(
             .get_result::<AttendanceRecord>(&mut conn).await;
         if let Ok(rec) = updated {
             log_tap(&mut conn, &item.nfc_id, payload.session_id, Some(sp.id), true, None).await;
-            results.push(AttendanceRecordWithStudent {
-                id: rec.id, student_id: rec.student_id, session_id: rec.session_id,
-                status: rec.status, student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()), nfc_id: sp.nfc_id.clone(),
+            early_results.push(BatchUpdateResult {
+                nfc_id: item.nfc_id.clone(),
+                result: "success".into(),
+                reason: None,
+                record: Some(AttendanceRecordWithStudent {
+                    id: rec.id,
+                    student_id: rec.student_id,
+                    session_id: rec.session_id,
+                    status: rec.status,
+                    student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()),
+                    nfc_id: sp.nfc_id.clone(),
+                }),
             });
             continue;
         }
 
-        match resp.json::<StudentProfile>().await {
-            Ok(sp) => candidates.push(Candidate {
-                nfc_id: item.nfc_id.clone(),
-                new_status: item.status.clone(),
-                student_id: sp.id,
-                student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()),
-                profile_nfc_id: sp.nfc_id,
-            }),
-            Err(_) => early_results.push(BatchUpdateResult {
-                nfc_id: item.nfc_id.clone(),
-                result: "failed".into(),
-                reason: Some("failed to parse student profile".into()),
-                record: None,
-            }),
-        }
+        candidates.push(Candidate {
+            nfc_id: item.nfc_id.clone(),
+            new_status: item.status.clone(),
+            student_id: sp.id,
+            student_name: format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()),
+            profile_nfc_id: sp.nfc_id,
+        });
     }
 
     // Phase 2 ── single DB transaction for all resolved candidates ────────────
