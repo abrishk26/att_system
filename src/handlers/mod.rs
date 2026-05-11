@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 use jwt_simple::prelude::*;
-use crate::models::{LogoutRequest, NfcLoginRequest, TokenDenylist};
+use crate::models::{LogoutRequest, NfcLoginRequest, TokenDenylist, StudentProfile};
 use crate::schema::token_denylist;
 
 pub mod instructors;
