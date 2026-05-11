@@ -188,10 +188,7 @@ pub async fn nfc_login_handler(
         ));
     }
 
-    #[derive(serde::Deserialize)]
-    struct UserProfileMinimal { id: uuid::Uuid, role: String }
-
-    let profile = response.json::<UserProfileMinimal>().await.map_err(|e| {
+    let profile = response.json::<StudentProfile>().await.map_err(|e| {
         log::error!("NFC login parse error: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -200,7 +197,7 @@ pub async fn nfc_login_handler(
     })?;
 
     let user_id = profile.id.to_string();
-    let role = profile.role;
+    let role = "student".to_string();
     let (access_token, refresh_token) = issue_tokens(&user_id, &role)?;
 
     log::info!("NFC login success: nfc_id={}, user_id={}, role={}", payload.nfc_id, user_id, role);
