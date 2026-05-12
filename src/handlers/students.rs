@@ -3,7 +3,7 @@ use diesel::{BoolExpressionMethods, ExpressionMethods, QueryDsl};
 use axum::{extract::{State, Path, Multipart, Query}, http::{StatusCode, Method}, Json};
 use crate::types::*;
 use crate::schema::{attendance_record, sessions, tap_log};
-use crate::helpers::internal_error;
+use crate::helpers::{course_context, fire_notification, internal_error};
 use crate::models::*;
 use chrono::Utc;
 
@@ -129,6 +129,39 @@ pub async fn mark_attendance_handler(
 
     // Log successful tap
     log_tap(&mut conn, &payload.nfc_id, payload.session_id, Some(sp.id), true, None).await;
+
+    {
+        let pool = state.pool.clone();
+        let client = state.client.clone();
+        let student_id = record.student_id;
+        let session_id = record.session_id;
+        let status = record.status.clone();
+        tokio::spawn(async move {
+            use diesel::prelude::*;
+            use diesel_async::RunQueryDsl;
+            let ctx = match pool.get().await {
+                Ok(mut c) => {
+                    match crate::schema::sessions::table
+                        .find(session_id)
+                        .get_result::<crate::models::Session>(&mut c)
+                        .await
+                    {
+                        Ok(sess) => course_context(&client, sess.course_id, sess.class_id).await,
+                        Err(_) => "Your course".to_string(),
+                    }
+                }
+                Err(_) => "Your course".to_string(),
+            };
+            let (title, msg) = match status.as_str() {
+                "present" => ("Attendance Recorded", format!("{}\n\nYou have been marked as present for today's session.", ctx)),
+                "absent"  => ("Marked Absent", format!("{}\n\nYou have been marked as absent. If this is incorrect, you can submit a permission request.", ctx)),
+                "late"    => ("Marked Late", format!("{}\n\nYou have been marked as late for today's session.", ctx)),
+                "excused" => ("Attendance Excused", format!("{}\n\nYour attendance has been marked as excused.", ctx)),
+                _ => return,
+            };
+            fire_notification(&pool, student_id, title, msg, "attendance_update", None).await;
+        });
+    }
 
     Ok((StatusCode::OK, Json(record)))
 }
@@ -305,6 +338,45 @@ pub async fn batch_update_attendance_handler(
         StatusCode::BAD_REQUEST
     };
 
+    // Fire notifications for every successfully updated student (fire-and-forget)
+    let notif_targets: Vec<(uuid::Uuid, String)> = all_results
+        .iter()
+        .filter(|r| r.result == "success")
+        .filter_map(|r| r.record.as_ref().map(|rec| (rec.student_id, rec.status.clone())))
+        .collect();
+    if !notif_targets.is_empty() {
+        let pool = state.pool.clone();
+        let client = state.client.clone();
+        let sid = session_id;
+        tokio::spawn(async move {
+            use diesel::prelude::*;
+            use diesel_async::RunQueryDsl;
+            let ctx = match pool.get().await {
+                Ok(mut c) => {
+                    match crate::schema::sessions::table
+                        .find(sid)
+                        .get_result::<crate::models::Session>(&mut c)
+                        .await
+                    {
+                        Ok(sess) => course_context(&client, sess.course_id, sess.class_id).await,
+                        Err(_) => "Your course".to_string(),
+                    }
+                }
+                Err(_) => "Your course".to_string(),
+            };
+            for (student_id, status) in notif_targets {
+                let (title, msg) = match status.as_str() {
+                    "present" => ("Attendance Recorded", format!("{}\n\nYou have been marked as present.", ctx)),
+                    "absent"  => ("Marked Absent", format!("{}\n\nYou have been marked as absent. You can submit a permission request if needed.", ctx)),
+                    "late"    => ("Marked Late", format!("{}\n\nYou have been marked as late.", ctx)),
+                    "excused" => ("Attendance Excused", format!("{}\n\nYour attendance has been marked as excused.", ctx)),
+                    _ => continue,
+                };
+                fire_notification(&pool, student_id, title, msg, "attendance_update", None).await;
+            }
+        });
+    }
+
     Ok((status_code, Json(BatchUpdateResponse { processed, skipped, failed, results: all_results })))
 }
 
@@ -398,23 +470,29 @@ pub async fn create_permission_handler(
     };
     diesel::insert_into(crate::schema::permissions::table).values(&new_perm).execute(&mut conn).await.map_err(internal_error)?;
 
-    // Insert Notification for Instructor
+    // Notify the instructor about the new permission request (with course context)
     if let Ok(session) = crate::schema::sessions::table
         .find(session_id_uuid)
         .first::<crate::models::Session>(&mut conn)
         .await
     {
-        let notif = crate::models::NewNotification {
-            user_id: session.instructor_id,
-            title: "New Permission Request".into(),
-            message: "A student has submitted a new permission request for your review.".into(),
-            notification_type: "permission_update".into(),
-            action_url: Some("/instructor/permissions".into()),
-        };
-        let _ = diesel::insert_into(crate::schema::notifications::table)
-            .values(&notif)
-            .execute(&mut conn)
-            .await;
+        let pool = state.pool.clone();
+        let client = state.client.clone();
+        let instructor_id = session.instructor_id;
+        let course_id = session.course_id;
+        let class_id = session.class_id;
+        tokio::spawn(async move {
+            let ctx = course_context(&client, course_id, class_id).await;
+            let msg = format!(
+                "{}\n\nA student has submitted a new permission request for your review.",
+                ctx
+            );
+            fire_notification(
+                &pool, instructor_id,
+                "New Permission Request", msg,
+                "permission_update", Some("/instructor/permissions".into()),
+            ).await;
+        });
     }
 
     Ok((StatusCode::CREATED, Json(new_perm)))
