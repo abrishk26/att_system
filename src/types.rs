@@ -53,8 +53,10 @@ pub struct CustomClaims {
 pub struct AppState {
     pub client: reqwest::Client,
     pub pool: Pool,
-    /// JWT HMAC key bytes — stored here so logout/refresh can share it
+    /// JWT HMAC key bytes — loaded from JWT_SECRET env var at startup
     pub jwt_secret: Vec<u8>,
+    /// Base URL of the data_source service — loaded from DATA_SOURCE_URL env var
+    pub data_source_url: String,
 }
 
 impl AppState {
@@ -68,13 +70,10 @@ pub struct ClaimsExtractor {
     pub role: String,
 }
 
-impl<S> FromRequestParts<S> for ClaimsExtractor
-where
-    S: Send + Sync,
-{
+impl FromRequestParts<AppState> for ClaimsExtractor {
     type Rejection = (StatusCode, Json<ErrorResponse>);
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
         let auth_header = parts
             .headers
             .get("Authorization")
@@ -96,9 +95,7 @@ where
         }
 
         let token = &auth_header[7..];
-        let key = HS256Key::from_bytes(
-            "raw_llkey_hastobeverylongtobestrongbuttheymakeitatruntime".as_bytes(),
-        );
+        let key = state.jwt_key();
 
         let claims = key
             .verify_token::<CustomClaims>(token, None)
@@ -130,13 +127,10 @@ pub struct InstructorClaims {
     pub user_id: String,
 }
 
-impl<S> FromRequestParts<S> for InstructorClaims
-where
-    S: Send + Sync,
-{
+impl FromRequestParts<AppState> for InstructorClaims {
     type Rejection = (StatusCode, Json<ErrorResponse>);
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
         let claims = ClaimsExtractor::from_request_parts(parts, state).await?;
 
         let role_lower = claims.role.to_lowercase();
@@ -159,13 +153,10 @@ pub struct StudentClaims {
     pub user_id: String,
 }
 
-impl<S> FromRequestParts<S> for StudentClaims
-where
-    S: Send + Sync,
-{
+impl FromRequestParts<AppState> for StudentClaims {
     type Rejection = (StatusCode, Json<ErrorResponse>);
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
         let claims = ClaimsExtractor::from_request_parts(parts, state).await?;
 
         let role_lower = claims.role.to_lowercase();
@@ -188,13 +179,10 @@ pub struct AdminClaims {
     pub user_id: String,
 }
 
-impl<S> FromRequestParts<S> for AdminClaims
-where
-    S: Send + Sync,
-{
+impl FromRequestParts<AppState> for AdminClaims {
     type Rejection = (StatusCode, Json<ErrorResponse>);
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
         let claims = ClaimsExtractor::from_request_parts(parts, state).await?;
 
         let role_lower = claims.role.to_lowercase();

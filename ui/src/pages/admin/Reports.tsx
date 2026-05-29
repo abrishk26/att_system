@@ -1,621 +1,640 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../../api';
-import type { Session } from '../../api';
-import type { AttendanceRecordWithStudent, Course, Class } from '../../api';
-import { exportToPDF } from '../../lib/exportUtils';
+import type { ReportDocument } from '../../api';
+import { exportToPDF, exportToExcelFriendlyCsv, openPrintableReportHtml, exportInstitutionalPDF } from '../../lib/exportUtils';
 import './Reports.css';
 
 type TimePeriod = 'daily' | 'weekly' | 'monthly' | 'all' | 'completed';
-type ExportFormat = 'csv' | 'json' | 'pdf';
+type ExportFormat = 'pdf' | 'excel_csv' | 'html_print' | 'json';
 
-function isCompletedStatus(status: string) {
-  return status === 'finished' || status === 'completed';
-}
-
-function shortId(id: string) {
-  return id.length > 10 ? `${id.slice(0, 6)}…${id.slice(-3)}` : id;
-}
-
-function downloadText(filename: string, content: string, mime = 'text/plain') {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function toCSV(rows: Array<Record<string, string | number | null | undefined>>) {
-  if (rows.length === 0) return '';
-  const headers = Array.from(
-    rows.reduce((set, r) => {
-      Object.keys(r).forEach(k => set.add(k));
-      return set;
-    }, new Set<string>())
-  );
-
-  const escape = (v: unknown) => {
-    const s = String(v ?? '');
-    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
-  };
-
-  const headerLine = headers.map(escape).join(',');
-  const lines = rows.map(r => headers.map(h => escape(r[h])).join(','));
-  return [headerLine, ...lines].join('\n');
-}
-
-/** Returns a date N days ago from today */
-function daysAgo(n: number): Date {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-/** Filter sessions by time period */
-function filterByTimePeriod(sessions: Session[], period: TimePeriod): Session[] {
-  const now = new Date();
-  switch (period) {
-    case 'daily': {
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      return sessions.filter(s => new Date(s.created_at) >= startOfDay);
-    }
-    case 'weekly': {
-      const weekAgo = daysAgo(7);
-      return sessions.filter(s => new Date(s.created_at) >= weekAgo);
-    }
-    case 'monthly': {
-      const monthAgo = daysAgo(30);
-      return sessions.filter(s => new Date(s.created_at) >= monthAgo);
-    }
-    case 'completed':
-      return sessions.filter(s => isCompletedStatus(s.status));
-    default:
-      return sessions;
-  }
-}
-
-async function enrichSessions(sessions: Session[]) {
-  const courseIds = Array.from(new Set(sessions.map(s => s.course_id)));
-  const classIds = Array.from(new Set(sessions.map(s => s.class_id)));
-
-  const coursesById = new Map<string, Course>();
-  const classesById = new Map<string, Class>();
-
-  await Promise.all(
-    courseIds.map(async id => {
-      try {
-        const c = await api.courseDetails(id);
-        coursesById.set(id, c);
-      } catch {
-        // Ignore per-item failures so one missing course doesn't break report generation.
-      }
-    })
-  );
-  await Promise.all(
-    classIds.map(async id => {
-      try {
-        const cl = await api.classDetails(id);
-        classesById.set(id, cl);
-      } catch {
-        // Ignore per-item failures.
-      }
-    })
-  );
-
-  return { coursesById, classesById };
-}
-
-function attendanceStatsFromRecords(records: AttendanceRecordWithStudent[]) {
-  const total = records.length;
-  const present = records.filter(r => r.status === 'present').length;
-  const absent = records.filter(r => r.status === 'absent').length;
-  const attendancePct = total > 0 ? Math.round((present / total) * 100) : 0;
-  return { total, present, absent, attendancePct };
-}
-
-/** Export helper that supports csv, json, and pdf */
-function exportData(
-  name: string,
-  format: ExportFormat,
-  rows: Array<Record<string, any>>,
-  pdfTitle?: string,
-  pdfColumns?: { header: string; dataKey: string }[],
-) {
-  if (format === 'json') {
-    downloadText(`${name}.json`, JSON.stringify({ rows }, null, 2), 'application/json');
-  } else if (format === 'pdf' && pdfTitle && pdfColumns) {
-    exportToPDF(pdfTitle, pdfColumns, rows, name);
-  } else {
-    downloadText(`${name}.csv`, toCSV(rows), 'text/csv');
-  }
-}
+const SERVER_REPORT_TYPES = [
+  { id: 'risk', label: 'At-Risk Learner Register', desc: 'Focuses on identifying students below attendance thresholds with high volatility and streaks.' },
+  { id: 'student_attendance', label: 'Student Attendance Intelligence', desc: 'Aggregates student records to provide detailed roster profiles and attendance metrics.' },
+  { id: 'instructor', label: 'Instructor Performance Overview', desc: 'Analyzes lecture delivery, finished vs. active session completion rates, and average attendance.' },
+  { id: 'course', label: 'Course Performance Analysis', desc: 'Identifies course-level engagement, chronological performance declines, and tracking indicators.' },
+  { id: 'departmental', label: 'Cohort & Departmental Briefing', desc: 'Segments attendance by class years, sections, and department engagement standards.' },
+  { id: 'semester', label: 'Semester Executive Brief', desc: 'High-level synthesis of schoolwide finished sessions, unique student volume, and registry compliance.' },
+  { id: 'compliance', label: 'Compliance & NFC Audit Log', desc: 'Audits card tap accuracy, duplicate tap volume, and unidentified card scans.' },
+  { id: 'irregularity', label: 'Flagged Irregularities Digest', desc: 'Synthesizes system alerts, critically low lecture turnouts, and potential reader failures.' },
+  { id: 'audit', label: 'Attendance Registry Audit Workbook', desc: 'Comprehensive raw verification ledger ideal for academic auditing purposes.' },
+  { id: 'comparative', label: 'Comparative Performance Report', desc: 'Compares performance indices across multiple departments and active courses.' },
+  { id: 'trend', label: 'Temporal Attendance Trends', desc: 'Chronological timeline trends segmented by days of the week and local hours.' },
+];
 
 export default function Reports() {
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('all');
   const [exportFormat, setExportFormat] = useState<ExportFormat>('pdf');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [serverReportType, setServerReportType] = useState('risk');
+  
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [recent, setRecent] = useState<Array<{ name: string; at: string }>>([]);
+  const [recent, setRecent] = useState<{ name: string; at: string; type: string }[]>([]);
+  const [previewDoc, setPreviewDoc] = useState<ReportDocument | null>(null);
 
+  // Load from local storage for recent log history
+  useEffect(() => {
+    const saved = localStorage.getItem('recent_reports');
+    if (saved) {
+      try {
+        setRecent(JSON.parse(saved));
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+
+  const saveRecent = (updated: typeof recent) => {
+    setRecent(updated);
+    localStorage.setItem('recent_reports', JSON.stringify(updated));
+  };
+
+  const toIso = (d: string, end: boolean) => {
+    if (!d) return undefined;
+    const x = new Date(d + (end ? 'T23:59:59.999Z' : 'T00:00:00.000Z'));
+    return x.toISOString();
+  };
+
+  // 1. Fetch & Preview Report
+  const generatePreview = async () => {
+    setError(null);
+    setBusy(true);
+    setPreviewDoc(null);
+    try {
+      const doc = await api.buildReport({
+        report_type: serverReportType,
+        from: dateFrom ? toIso(dateFrom, false) : undefined,
+        to: dateTo ? toIso(dateTo, true) : undefined,
+        include_charts: false,
+      });
+      setPreviewDoc(doc);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load preview');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 2. Export / Print Previewed Report
+  const triggerExport = () => {
+    if (!previewDoc) return;
+    try {
+      const name = `${serverReportType}_report_${Date.now()}`;
+      
+      if (exportFormat === 'pdf') {
+        exportInstitutionalPDF(previewDoc, name);
+      } else if (exportFormat === 'html_print') {
+        openPrintableReportHtml(previewDoc.title, previewDoc);
+      } else if (exportFormat === 'excel_csv') {
+        const flatRows: Record<string, string>[] = [];
+        previewDoc.kpis.forEach(kpi => {
+          kpi.items.forEach(item => {
+            flatRows.push({ Section: kpi.title, Metric: item[0] ?? '', Value: item[1] ?? '' });
+          });
+        });
+        previewDoc.tables.forEach(table => {
+          table.rows.forEach(row => {
+            const rowObj: Record<string, string> = { Section: table.title };
+            table.columns.forEach((col, idx) => {
+              rowObj[col] = row[idx] ?? '';
+            });
+            flatRows.push(rowObj);
+          });
+        });
+        exportToExcelFriendlyCsv(flatRows, name);
+      } else if (exportFormat === 'json') {
+        const blob = new Blob([JSON.stringify(previewDoc, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${name}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      const newRecent = [{ name, at: new Date().toISOString(), type: serverReportType }, ...recent].slice(0, 8);
+      saveRecent(newRecent);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Export failed');
+    }
+  };
+
+  // 3. Client Side Quick Exports
   const loadBaseSessions = async () => {
     const all = await api.allSessions();
-    let filtered = filterByTimePeriod(all, timePeriod);
+    let filtered = all;
+    const now = new Date();
+    
+    if (timePeriod === 'daily') {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      filtered = all.filter(s => new Date(s.created_at) >= start);
+    } else if (timePeriod === 'weekly') {
+      const start = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+      filtered = all.filter(s => new Date(s.created_at) >= start);
+    } else if (timePeriod === 'monthly') {
+      const start = new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+      filtered = all.filter(s => new Date(s.created_at) >= start);
+    } else if (timePeriod === 'completed') {
+      filtered = all.filter(s => s.status === 'finished' || s.status === 'completed');
+    }
 
-    // Apply custom date range if specified
     if (dateFrom) {
       const from = new Date(dateFrom);
       filtered = filtered.filter(s => new Date(s.created_at) >= from);
     }
     if (dateTo) {
       const to = new Date(dateTo);
-      to.setHours(23, 59, 59);
+      to.setHours(23, 59, 59, 999);
       filtered = filtered.filter(s => new Date(s.created_at) <= to);
     }
-
     return filtered;
   };
 
-  const exportDepartmentAttendanceSummary = async () => {
+  const executeQuickExport = async (type: 'dept_summary' | 'course_perf' | 'staff_plan' | 'audit_eval' | 'per_student') => {
     setError(null);
     setBusy(true);
     try {
       const sessions = await loadBaseSessions();
-      await enrichSessions(sessions);
+      const filename = `${type}_quick_${Date.now()}`;
 
-      // Cap for responsiveness; still based on real backend data.
-      const slice = sessions.slice(0, 40);
+      if (type === 'dept_summary') {
+        const completed = sessions.filter(s => s.status === 'finished' || s.status === 'completed');
+        const records = await Promise.all(
+          completed.slice(0, 50).map(s => api.sessionRecords(s.id).catch(() => []))
+        );
+        const totalRecords = records.flat().length;
+        const totalPresent = records.flat().filter(r => r.status === 'present').length;
+        const avgRate = totalRecords > 0 ? Math.round((totalPresent / totalRecords) * 100) : 0;
 
-      const recordsBySession = await Promise.all(
-        slice.map(s => api.sessionRecords(s.id).catch(() => [] as AttendanceRecordWithStudent[]))
-      );
-
-      const sessionAttendance = slice.map((s, i) => {
-        const recs = recordsBySession[i];
-        const st = attendanceStatsFromRecords(recs);
-        return { session: s, ...st };
-      });
-
-      const totalRecords = sessionAttendance.reduce((sum, s) => sum + s.total, 0);
-      const totalPresent = sessionAttendance.reduce((sum, s) => sum + s.present, 0);
-      const avgAttendance = totalRecords > 0 ? Math.round((totalPresent / totalRecords) * 100) : 0;
-
-      const completionRate =
-        sessions.length > 0
-          ? Math.round((sessions.filter(s => isCompletedStatus(s.status)).length / sessions.length) * 100)
-          : 0;
-
-      const distribution = {
-        excellent: sessionAttendance.filter(s => s.attendancePct >= 90).length,
-        good: sessionAttendance.filter(s => s.attendancePct >= 80 && s.attendancePct < 90).length,
-        fair: sessionAttendance.filter(s => s.attendancePct >= 70 && s.attendancePct < 80).length,
-        poor: sessionAttendance.filter(s => s.attendancePct < 70).length,
-      };
-
-      const outRows = [
-        { Metric: 'Total Sessions', Value: sessions.length },
-        { Metric: 'Export Sessions (capped)', Value: slice.length },
-        { Metric: 'Total Records', Value: totalRecords },
-        { Metric: 'Present Count', Value: totalPresent },
-        { Metric: 'Avg Attendance (%)', Value: avgAttendance },
-        { Metric: 'Completion Rate (%)', Value: completionRate },
-        { Metric: 'Excellent Sessions (>=90%)', Value: distribution.excellent },
-        { Metric: 'Good Sessions (80-89%)', Value: distribution.good },
-        { Metric: 'Fair Sessions (70-79%)', Value: distribution.fair },
-        { Metric: 'Poor Sessions (<70%)', Value: distribution.poor },
-      ];
-
-      const name = `department_attendance_summary_${timePeriod}_${Date.now()}`;
-      const pdfColumns = [
-        { header: 'Metric', dataKey: 'Metric' },
-        { header: 'Value', dataKey: 'Value' },
-      ];
-      exportData(name, exportFormat, outRows, `Department Attendance Summary (${timePeriod})`, pdfColumns);
-
-      setRecent(prev => [{ name, at: new Date().toISOString() }, ...prev].slice(0, 8));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to generate report');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const exportCoursePerformanceReport = async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      const sessions = await loadBaseSessions();
-      const completed = sessions.filter(s => isCompletedStatus(s.status));
-      const slice = completed.slice(0, 40);
-
-      const recordsBySession = await Promise.all(
-        slice.map(s => api.sessionRecords(s.id).catch(() => [] as AttendanceRecordWithStudent[]))
-      );
-
-      const byCourse = new Map<
-        string,
-        { course_id: string; present: number; total: number; sessions: number }
-      >();
-
-      for (let i = 0; i < slice.length; i++) {
-        const s = slice[i];
-        const recs = recordsBySession[i];
-        const st = attendanceStatsFromRecords(recs);
-        if (!byCourse.has(s.course_id)) {
-          byCourse.set(s.course_id, { course_id: s.course_id, present: 0, total: 0, sessions: 0 });
+        const summaryRows = [
+          { Metric: 'Total Sessions Found', Value: sessions.length },
+          { Metric: 'Completed Sessions (Analyzed)', Value: completed.length },
+          { Metric: 'Total Attendance Enrolled Rows', Value: totalRecords },
+          { Metric: 'Total Marked Present', Value: totalPresent },
+          { Metric: 'Overall Average Attendance', Value: `${avgRate}%` },
+        ];
+        
+        if (exportFormat === 'pdf') {
+          exportToPDF('Department Attendance Summary', [
+            { header: 'Metric', dataKey: 'Metric' },
+            { header: 'Value', dataKey: 'Value' }
+          ], summaryRows, filename);
+        } else {
+          exportToExcelFriendlyCsv(summaryRows, filename);
         }
-        const entry = byCourse.get(s.course_id)!;
-        entry.present += st.present;
-        entry.total += st.total;
-        entry.sessions += 1;
       }
 
-      const courseIds = Array.from(byCourse.keys());
-      const courses = await Promise.all(
-        courseIds.map(id => api.courseDetails(id).catch(() => undefined as Course | undefined))
-      );
+      else if (type === 'course_perf') {
+        const completed = sessions.filter(s => s.status === 'finished' || s.status === 'completed');
+        const courseMap = new Map<string, { present: number; total: number; count: number }>();
+        const slice = completed.slice(0, 40);
+        const records = await Promise.all(
+          slice.map(s => api.sessionRecords(s.id).catch(() => []))
+        );
 
-      const rows = courseIds.map((id, i) => {
-        const c = courses[i];
-        const entry = byCourse.get(id)!;
-        return {
-          Course: c?.name ?? id,
-          'Course ID': id,
-          'Attendance %': entry.total > 0 ? Math.round((entry.present / entry.total) * 100) : 0,
-          Sessions: entry.sessions,
-        };
-      });
+        slice.forEach((s, idx) => {
+          if (!courseMap.has(s.course_id)) {
+            courseMap.set(s.course_id, { present: 0, total: 0, count: 0 });
+          }
+          const recs = records[idx];
+          const entry = courseMap.get(s.course_id)!;
+          entry.count += 1;
+          entry.total += recs.length;
+          entry.present += recs.filter(r => r.status === 'present').length;
+        });
 
-      const name = `course_performance_${timePeriod}_${Date.now()}`;
-      const pdfColumns = [
-        { header: 'Course', dataKey: 'Course' },
-        { header: 'Attendance %', dataKey: 'Attendance %' },
-        { header: 'Sessions', dataKey: 'Sessions' },
-      ];
-      exportData(name, exportFormat, rows, `Course Performance Report (${timePeriod})`, pdfColumns);
+        const rows = await Promise.all(
+          Array.from(courseMap.entries()).map(async ([courseId, data]) => {
+            const course = await api.courseDetails(courseId).catch(() => null);
+            return {
+              'Course Name': course?.name ?? courseId.slice(0, 10),
+              'Course ID': course?.course_id ?? courseId.slice(0, 8),
+              'Finished Sessions': data.count,
+              'Attendance Rate': data.total > 0 ? `${Math.round((data.present / data.total) * 100)}%` : '0%',
+            };
+          })
+        );
 
-      setRecent(prev => [{ name, at: new Date().toISOString() }, ...prev].slice(0, 8));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to generate report');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const exportStaffPlanningReport = async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      const sessions = await loadBaseSessions();
-      const completed = sessions.filter(s => isCompletedStatus(s.status));
-      const slice = completed.slice(0, 40);
-
-      const recordsBySession = await Promise.all(
-        slice.map(s => api.sessionRecords(s.id).catch(() => [] as AttendanceRecordWithStudent[]))
-      );
-
-      const byInstructor = new Map<
-        string,
-        { instructor_id: string; activeSessions: number; completedSessions: number; present: number; total: number }
-      >();
-
-      // Active sessions per instructor across the (un-capped) fetched set
-      const activeByInstructor = new Map<string, number>();
-      for (const s of sessions) {
-        if (s.status === 'active') activeByInstructor.set(s.instructor_id, (activeByInstructor.get(s.instructor_id) ?? 0) + 1);
+        if (exportFormat === 'pdf') {
+          exportToPDF('Course Performance Ledger', [
+            { header: 'Course Name', dataKey: 'Course Name' },
+            { header: 'Course ID', dataKey: 'Course ID' },
+            { header: 'Finished Sessions', dataKey: 'Finished Sessions' },
+            { header: 'Attendance Rate', dataKey: 'Attendance Rate' }
+          ], rows, filename);
+        } else {
+          exportToExcelFriendlyCsv(rows, filename);
+        }
       }
 
-      for (let i = 0; i < slice.length; i++) {
-        const s = slice[i];
-        const recs = recordsBySession[i];
-        const st = attendanceStatsFromRecords(recs);
-        if (!byInstructor.has(s.instructor_id)) {
-          byInstructor.set(s.instructor_id, {
-            instructor_id: s.instructor_id,
-            activeSessions: activeByInstructor.get(s.instructor_id) ?? 0,
-            completedSessions: 0,
-            present: 0,
-            total: 0,
+      else if (type === 'staff_plan') {
+        const completed = sessions.filter(s => s.status === 'finished' || s.status === 'completed');
+        const staffMap = new Map<string, { present: number; total: number; count: number }>();
+        const slice = completed.slice(0, 40);
+        const records = await Promise.all(
+          slice.map(s => api.sessionRecords(s.id).catch(() => []))
+        );
+
+        slice.forEach((s, idx) => {
+          if (!staffMap.has(s.instructor_id)) {
+            staffMap.set(s.instructor_id, { present: 0, total: 0, count: 0 });
+          }
+          const recs = records[idx];
+          const entry = staffMap.get(s.instructor_id)!;
+          entry.count += 1;
+          entry.total += recs.length;
+          entry.present += recs.filter(r => r.status === 'present').length;
+        });
+
+        const intel: any = await api.universityAnalytics().catch(() => null);
+        const nameMap = new Map<string, string>();
+        if (intel?.instructors) {
+          intel.instructors.forEach((i: any) => {
+            nameMap.set(i.instructor_id, i.instructor_name ?? i.instructor_id);
           });
         }
-        const entry = byInstructor.get(s.instructor_id)!;
-        entry.present += st.present;
-        entry.total += st.total;
-        entry.completedSessions += 1;
-      }
 
-      const rows = Array.from(byInstructor.values()).map(entry => ({
-        Instructor: shortId(entry.instructor_id),
-        'Instructor ID': entry.instructor_id,
-        'Active Sessions': entry.activeSessions,
-        'Completed Sessions': entry.completedSessions,
-        'Avg Attendance %': entry.total > 0 ? Math.round((entry.present / entry.total) * 100) : 0,
-      }));
+        const rows = Array.from(staffMap.entries()).map(([iid, data]) => {
+          const name = nameMap.get(iid) ?? iid.slice(0, 8);
+          return {
+            'Staff Member': name,
+            'Staff ID': iid,
+            'Total Finished': data.count,
+            'Performance Rate': data.total > 0 ? `${Math.round((data.present / data.total) * 100)}%` : '0%',
+          };
+        });
 
-      const name = `staff_planning_${timePeriod}_${Date.now()}`;
-      const pdfColumns = [
-        { header: 'Instructor', dataKey: 'Instructor' },
-        { header: 'Active', dataKey: 'Active Sessions' },
-        { header: 'Completed', dataKey: 'Completed Sessions' },
-        { header: 'Avg Attendance', dataKey: 'Avg Attendance %' },
-      ];
-      exportData(name, exportFormat, rows, `Staff Planning Report (${timePeriod})`, pdfColumns);
-
-      setRecent(prev => [{ name, at: new Date().toISOString() }, ...prev].slice(0, 8));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to generate report');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const exportAuditEvaluationReport = async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      const sessions = await loadBaseSessions();
-      const completed = sessions.filter(s => isCompletedStatus(s.status));
-      const slice = completed.slice(0, 50);
-
-      const { coursesById, classesById } = await enrichSessions(slice);
-      const recordsBySession = await Promise.all(
-        slice.map(s => api.sessionRecords(s.id).catch(() => [] as AttendanceRecordWithStudent[]))
-      );
-
-      const auditRows = slice.map((s, i) => {
-        const recs = recordsBySession[i];
-        const st = attendanceStatsFromRecords(recs);
-        const course = coursesById.get(s.course_id);
-        const cls = classesById.get(s.class_id);
-        const classLabel = cls ? `Year ${cls.year} · Section ${cls.section}` : '';
-        return {
-          'Session ID': s.id,
-          Instructor: shortId(s.instructor_id),
-          Course: course?.name ?? s.course_id,
-          Class: classLabel,
-          'Attendance %': st.attendancePct,
-          Status: s.status,
-          Flag: st.attendancePct < 70 ? 'LOW' : '',
-        };
-      });
-
-      const name = `audit_evaluation_${timePeriod}_${Date.now()}`;
-      const pdfColumns = [
-        { header: 'Course', dataKey: 'Course' },
-        { header: 'Class', dataKey: 'Class' },
-        { header: 'Attendance %', dataKey: 'Attendance %' },
-        { header: 'Status', dataKey: 'Status' },
-        { header: 'Flag', dataKey: 'Flag' },
-      ];
-      exportData(name, exportFormat, auditRows, `Audit & Evaluation Report (${timePeriod})`, pdfColumns);
-
-      setRecent(prev => [{ name, at: new Date().toISOString() }, ...prev].slice(0, 8));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to generate report');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  /** New: Per-student attendance report */
-  const exportPerStudentReport = async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      const sessions = await loadBaseSessions();
-      const completed = sessions.filter(s => isCompletedStatus(s.status));
-      const slice = completed.slice(0, 40);
-
-      const recordsBySession = await Promise.all(
-        slice.map(s => api.sessionRecords(s.id).catch(() => [] as AttendanceRecordWithStudent[]))
-      );
-
-      const studentMap = new Map<string, {
-        student_name: string; nfc_id: string; total: number;
-        present: number; absent: number; late: number; excused: number;
-      }>();
-
-      for (const recs of recordsBySession) {
-        for (const rec of recs) {
-          if (!studentMap.has(rec.student_id)) {
-            studentMap.set(rec.student_id, {
-              student_name: rec.student_name, nfc_id: rec.nfc_id,
-              total: 0, present: 0, absent: 0, late: 0, excused: 0,
-            });
-          }
-          const entry = studentMap.get(rec.student_id)!;
-          entry.total += 1;
-          if (rec.status === 'present') entry.present += 1;
-          else if (rec.status === 'absent') entry.absent += 1;
-          else if (rec.status === 'late') entry.late += 1;
-          else if (rec.status === 'excused') entry.excused += 1;
+        if (exportFormat === 'pdf') {
+          exportToPDF('Academic Staff Planning Performance', [
+            { header: 'Staff Member', dataKey: 'Staff Member' },
+            { header: 'Staff ID', dataKey: 'Staff ID' },
+            { header: 'Total Finished', dataKey: 'Total Finished' },
+            { header: 'Performance Rate', dataKey: 'Performance Rate' }
+          ], rows, filename);
+        } else {
+          exportToExcelFriendlyCsv(rows, filename);
         }
       }
 
-      const rows = Array.from(studentMap.values()).map(entry => ({
-        'Student Name': entry.student_name,
-        'NFC ID': entry.nfc_id,
-        'Total Sessions': entry.total,
-        'Present': entry.present,
-        'Late': entry.late,
-        'Absent': entry.absent,
-        'Excused': entry.excused,
-        'Attendance %': entry.total > 0 ? Math.round(((entry.present + entry.late) / entry.total) * 100) : 0,
-      }));
+      else if (type === 'audit_eval') {
+        const completed = sessions.filter(s => s.status === 'finished' || s.status === 'completed');
+        const slice = completed.slice(0, 40);
+        const records = await Promise.all(
+          slice.map(s => api.sessionRecords(s.id).catch(() => []))
+        );
 
-      rows.sort((a, b) => (b['Attendance %'] as number) - (a['Attendance %'] as number));
+        const rows = slice.map((s, idx) => {
+          const recs = records[idx];
+          const present = recs.filter(r => r.status === 'present').length;
+          const rate = recs.length > 0 ? Math.round((present / recs.length) * 100) : 0;
+          return {
+            'Session ID': s.id.slice(0, 8),
+            'Course ID': s.course_id.slice(0, 8),
+            'Class ID': s.class_id.slice(0, 8),
+            'Marked Seats': recs.length,
+            'Attendance Rate': `${rate}%`,
+            'Compliance Status': rate < 70 ? 'CRITICAL' : 'OK',
+          };
+        });
 
-      const name = `per_student_report_${timePeriod}_${Date.now()}`;
-      const pdfColumns = [
-        { header: 'Student Name', dataKey: 'Student Name' },
-        { header: 'NFC ID', dataKey: 'NFC ID' },
-        { header: 'Total', dataKey: 'Total Sessions' },
-        { header: 'Present', dataKey: 'Present' },
-        { header: 'Late', dataKey: 'Late' },
-        { header: 'Absent', dataKey: 'Absent' },
-        { header: 'Excused', dataKey: 'Excused' },
-        { header: 'Rate', dataKey: 'Attendance %' },
-      ];
-      exportData(name, exportFormat, rows, `Per-Student Attendance Report (${timePeriod})`, pdfColumns);
+        if (exportFormat === 'pdf') {
+          exportToPDF('Session Registry Compliance Audit', [
+            { header: 'Session ID', dataKey: 'Session ID' },
+            { header: 'Course ID', dataKey: 'Course ID' },
+            { header: 'Class ID', dataKey: 'Class ID' },
+            { header: 'Marked Seats', dataKey: 'Marked Seats' },
+            { header: 'Attendance Rate', dataKey: 'Attendance Rate' },
+            { header: 'Compliance Status', dataKey: 'Compliance Status' }
+          ], rows, filename);
+        } else {
+          exportToExcelFriendlyCsv(rows, filename);
+        }
+      }
 
-      setRecent(prev => [{ name, at: new Date().toISOString() }, ...prev].slice(0, 8));
+      else if (type === 'per_student') {
+        const completed = sessions.filter(s => s.status === 'finished' || s.status === 'completed');
+        const slice = completed.slice(0, 30);
+        const records = await Promise.all(
+          slice.map(s => api.sessionRecords(s.id).catch(() => []))
+        );
+
+        const studentMap = new Map<string, { name: string; total: number; present: number; absent: number }>();
+        records.flat().forEach(r => {
+          if (!studentMap.has(r.student_id)) {
+            studentMap.set(r.student_id, { name: r.student_name, total: 0, present: 0, absent: 0 });
+          }
+          const entry = studentMap.get(r.student_id)!;
+          entry.total += 1;
+          if (r.status === 'present') entry.present += 1;
+          else entry.absent += 1;
+        });
+
+        const rows = Array.from(studentMap.entries()).map(([, data]) => ({
+          'Student Name': data.name,
+          'Total sessions': data.total,
+          'Present Count': data.present,
+          'Absent Count': data.absent,
+          'Attendance Pct': `${Math.round((data.present / data.total) * 100)}%`,
+        }));
+
+        if (exportFormat === 'pdf') {
+          exportToPDF('Per-Student Roster Overview', [
+            { header: 'Student Name', dataKey: 'Student Name' },
+            { header: 'Total sessions', dataKey: 'Total sessions' },
+            { header: 'Present Count', dataKey: 'Present Count' },
+            { header: 'Absent Count', dataKey: 'Absent Count' },
+            { header: 'Attendance Pct', dataKey: 'Attendance Pct' }
+          ], rows, filename);
+        } else {
+          exportToExcelFriendlyCsv(rows, filename);
+        }
+      }
+
+      const newRecent = [{ name: filename, at: new Date().toISOString(), type: 'Quick Export' }, ...recent].slice(0, 8);
+      saveRecent(newRecent);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to generate report');
+      setError(e instanceof Error ? e.message : 'Quick export failed');
     } finally {
       setBusy(false);
     }
   };
 
-  const canGenerate = !busy;
+  const activeTemplateDesc = useMemo(() => {
+    return SERVER_REPORT_TYPES.find(t => t.id === serverReportType)?.desc ?? '';
+  }, [serverReportType]);
 
   return (
     <div className="reports-page">
-      <div className="reports-header">
-        <div>
-          <h2>Reports &amp; Exports</h2>
-          <p className="page-sub">Generate attendance and performance reports with daily, weekly, monthly, or custom date ranges</p>
+      {/* ── Branded Premium Header ── */}
+      <div className="reports-brand-header">
+        <div className="header-info">
+          <h2>Reports &amp; Analytics Hub</h2>
+          <p className="page-sub">Access institutional reporting intelligence, export ledger profiles, and audit lecture registries</p>
         </div>
+        <div className="header-badge">ADMIN CENTER</div>
       </div>
 
-      <div className="reports-card">
-        <div className="reports-card-title">Report Configuration</div>
-        <div className="reports-form">
-          <label className="field">
-            <span className="field-label">Time Period</span>
-            <select
-              className="field-control"
-              value={timePeriod}
-              onChange={e => setTimePeriod(e.target.value as TimePeriod)}
-            >
-              <option value="daily">Today</option>
-              <option value="weekly">Last 7 Days</option>
-              <option value="monthly">Last 30 Days</option>
-              <option value="completed">Completed Only</option>
-              <option value="all">All Sessions</option>
+      {/* ── Primary Settings Strip ── */}
+      <div className="card reports-settings-strip">
+        <div className="strip-title">⚙ Global Export Constraints</div>
+        <div className="strip-form">
+          <div className="form-field">
+            <span className="label">Date Preset</span>
+            <select className="control" value={timePeriod} onChange={e => setTimePeriod(e.target.value as TimePeriod)}>
+              <option value="all">All Available History</option>
+              <option value="daily">Today Only</option>
+              <option value="weekly">Last 7 Calendar Days</option>
+              <option value="monthly">Last 30 Calendar Days</option>
+              <option value="completed">All Completed Sessions</option>
             </select>
-          </label>
-
-          <label className="field">
-            <span className="field-label">From Date</span>
-            <input
-              type="date"
-              className="field-control"
-              value={dateFrom}
-              onChange={e => setDateFrom(e.target.value)}
-            />
-          </label>
-
-          <label className="field">
-            <span className="field-label">To Date</span>
-            <input
-              type="date"
-              className="field-control"
-              value={dateTo}
-              onChange={e => setDateTo(e.target.value)}
-            />
-          </label>
-
-          <label className="field">
-            <span className="field-label">Export Format</span>
-            <select
-              className="field-control"
-              value={exportFormat}
-              onChange={e => setExportFormat(e.target.value as ExportFormat)}
-            >
-              <option value="pdf">PDF</option>
-              <option value="csv">CSV</option>
-              <option value="json">JSON</option>
+          </div>
+          <div className="form-field">
+            <span className="label">From Date</span>
+            <input type="date" className="control" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          </div>
+          <div className="form-field">
+            <span className="label">To Date</span>
+            <input type="date" className="control" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          </div>
+          <div className="form-field">
+            <span className="label">Export Format</span>
+            <select className="control" value={exportFormat} onChange={e => setExportFormat(e.target.value as ExportFormat)}>
+              <option value="pdf">Professional PDF (.pdf)</option>
+              <option value="excel_csv">Excel-Friendly CSV (.csv)</option>
+              <option value="html_print">Print Document View (.html)</option>
+              <option value="json">Raw Structured JSON (.json)</option>
             </select>
-          </label>
+          </div>
         </div>
-
-        {error && <div className="reports-error">⚠ {error}</div>}
+        {error && <div className="reports-strip-error">⚠ {error}</div>}
       </div>
 
-      <div className="reports-grid">
-        <ReportTile
-          title="Department Attendance Summary"
-          description="Comprehensive attendance report across sessions"
-          icon="👥"
-          onGenerate={exportDepartmentAttendanceSummary}
-          disabled={!canGenerate}
-        />
-        <ReportTile
-          title="Course Performance Report"
-          description="Attendance vs. participation by course"
-          icon="📚"
-          onGenerate={exportCoursePerformanceReport}
-          disabled={!canGenerate}
-        />
-        <ReportTile
-          title="Staff Planning Report"
-          description="Insights for curriculum adjustments and staffing"
-          icon="🧑‍🏫"
-          onGenerate={exportStaffPlanningReport}
-          disabled={!canGenerate}
-        />
-        <ReportTile
-          title="Audit &amp; Evaluation Report"
-          description="Compliance and evaluation documentation"
-          icon="🧾"
-          onGenerate={exportAuditEvaluationReport}
-          disabled={!canGenerate}
-        />
-        <ReportTile
-          title="Per-Student Report"
-          description="Individual student attendance breakdown across all courses"
-          icon="🎓"
-          onGenerate={exportPerStudentReport}
-          disabled={!canGenerate}
-        />
-      </div>
-
-      <div className="reports-recent">
-        <div className="reports-card-title">Recent Reports</div>
-        <div className="recent-list">
-          {recent.length === 0 ? (
-            <div className="empty-row">No reports generated yet</div>
-          ) : (
-            recent.map(r => (
-              <div key={r.name} className="recent-row">
-                <div className="recent-name">{r.name}</div>
-                <div className="recent-at">{new Date(r.at).toLocaleString()}</div>
+      {/* ── Double Column Center Layout ── */}
+      <div className="reports-twin-columns">
+        
+        {/* Left Column: Server Report Engine & Activity log */}
+        <div className="column-left flex-col gap-20">
+          
+          {/* Institutional Engine Card */}
+          <div className="card engine-card">
+            <div className="engine-header">
+              <span className="engine-icon">🏢</span>
+              <div>
+                <h3 className="section-title">Institutional Report Engine</h3>
+                <p className="section-sub">Generate Registrar-enriched reports loaded dynamically from university analytics</p>
               </div>
-            ))
-          )}
+            </div>
+            
+            <div className="engine-form">
+              <div className="form-field">
+                <span className="label">Select Report Template</span>
+                <select className="control selection" value={serverReportType} onChange={e => setServerReportType(e.target.value)}>
+                  {SERVER_REPORT_TYPES.map(t => (
+                    <option key={t.id} value={t.id}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="template-description-card">
+                <span className="desc-icon">ℹ</span>
+                <p className="desc-text">{activeTemplateDesc}</p>
+              </div>
+            </div>
+
+            <div className="engine-actions">
+              <button className="primary-btn flex-1 justify-center" disabled={busy} onClick={generatePreview}>
+                {busy ? <span className="spinner-mini" /> : '🔍'} Load &amp; Preview Report
+              </button>
+            </div>
+          </div>
+
+          {/* Activity Log / Recent Reports Card */}
+          <div className="card activity-card">
+            <h3 className="section-title">Recent Activity Log</h3>
+            <p className="section-sub">Quick access to previously processed exports</p>
+            
+            <div className="activity-list">
+              {recent.length === 0 ? (
+                <div className="empty-activity">No recent reports found in session local storage</div>
+              ) : (
+                recent.map((r, idx) => (
+                  <div key={idx} className="activity-row">
+                    <div className="activity-icon">📄</div>
+                    <div className="activity-meta">
+                      <div className="activity-name">{r.name}</div>
+                      <div className="activity-tag">{r.type.toUpperCase()}</div>
+                    </div>
+                    <div className="activity-time">{new Date(r.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
         </div>
+
+        {/* Right Column: Live Report Roster / Preview Section */}
+        <div className="column-right">
+          <div className="card preview-card">
+            <div className="preview-header">
+              <h3 className="section-title">Interactive Live Report Preview</h3>
+              {previewDoc ? (
+                <button className="export-action-btn animate-bounce" onClick={triggerExport}>
+                  📥 Export Document ({exportFormat.toUpperCase()})
+                </button>
+              ) : (
+                <span className="preview-indicator">No report loaded</span>
+              )}
+            </div>
+
+            <div className="preview-body-frame">
+              {previewDoc ? (
+                <div className="actual-preview-document">
+                  <div className="preview-doc-header">
+                    <h4>{previewDoc.title}</h4>
+                    <p className="preview-doc-sub">{previewDoc.subtitle}</p>
+                    <span className="preview-doc-stamp">Timestamp: {new Date(previewDoc.generated_at).toLocaleString()}</span>
+                  </div>
+
+                  <div className="preview-doc-summary-card">
+                    <h5>EXECUTIVE BRIEFING</h5>
+                    <p>{previewDoc.executive_summary}</p>
+                  </div>
+
+                  {previewDoc.kpis.map((kpiBlock, kpiIdx) => (
+                    <div key={kpiIdx} className="preview-doc-kpi-section">
+                      <h5>{kpiBlock.title}</h5>
+                      <div className="preview-kpi-grid">
+                        {kpiBlock.items.map((item, itemIdx) => (
+                          <div key={itemIdx} className="preview-kpi-tile">
+                            <span className="kpi-label">{item[0]}</span>
+                            <span className="kpi-value">{item[1]}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+
+                  {previewDoc.tables.map((table, tIdx) => (
+                    <div key={tIdx} className="preview-doc-table-section">
+                      <h5>{table.title}</h5>
+                      <div className="preview-table-wrapper">
+                        <table>
+                          <thead>
+                            <tr>
+                              {table.columns.map((col, colIdx) => <th key={colIdx}>{col}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {table.rows.slice(0, 8).map((row, rowIdx) => (
+                              <tr key={rowIdx}>
+                                {row.map((cell, cIdx) => <td key={cIdx}>{cell}</td>)}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {table.rows.length > 8 && (
+                          <div className="table-truncated-caption">... and {table.rows.length - 8} more rows (full document will export complete roster)</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="preview-empty-state">
+                  <div className="empty-graphic">📊</div>
+                  <h4>No Active Preview Data</h4>
+                  <p>Configure and load an institutional template from the report engine panel to view an interactive briefing preview here before exporting.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      {/* ── Premium Quick Client-Side Export Center ── */}
+      <div className="reports-section-divider">
+        <span>⚡ Quick Export Roster Ledger Center</span>
+      </div>
+
+      <div className="quick-export-grids">
+        <QuickExportTile
+          title="University Enrollment Status"
+          desc="Standard executive summary aggregating attendance status distributions and school-wide performance benchmarks."
+          icon="👥"
+          onTrigger={() => executeQuickExport('dept_summary')}
+          disabled={busy}
+        />
+        <QuickExportTile
+          title="Course Roster &amp; Attendance"
+          desc="Participation vs. enrollment details sorted across active academic courses. Identifies overall rate averages."
+          icon="📚"
+          onTrigger={() => executeQuickExport('course_perf')}
+          disabled={busy}
+        />
+        <QuickExportTile
+          title="Academic Staff Performance"
+          desc="Insights tracking instructors active schedules, finished lecture ratios, and average turnouts."
+          icon="🧑‍🏫"
+          onTrigger={() => executeQuickExport('staff_plan')}
+          disabled={busy}
+        />
+        <QuickExportTile
+          title="Session Registry &amp; Compliance"
+          desc="Registry list of active lecture seat capacities and low performance registry warning flags."
+          icon="🧾"
+          onTrigger={() => executeQuickExport('audit_eval')}
+          disabled={busy}
+        />
+        <QuickExportTile
+          title="Per-Student Attendance"
+          desc="Detailed individual student logs showing comprehensive attendance statistics across courses."
+          icon="🎓"
+          onTrigger={() => executeQuickExport('per_student')}
+          disabled={busy}
+        />
+      </div>
+
+      {/* ── Detailed Roster Visualizers ── */}
+      <div className="reports-section-divider">
+        <span>📈 Advanced Interactive Report Interfaces</span>
+      </div>
+
+      <div className="reports-interactive-links">
+        <Link to="/admin/reports/student-attendance" className="interactive-report-card">
+          <div className="icon-badge bg-emerald">🎓</div>
+          <div className="card-info">
+            <h4>Student Roster Intelligence Report</h4>
+            <p>Advanced granular cohort roster loaded with live Chart.js visualizations, individual trend tracking indices, and risk categorization metrics.</p>
+          </div>
+          <span className="arrow-icon">→</span>
+        </Link>
+
+        <Link to="/admin/reports/course-attendance" className="interactive-report-card">
+          <div className="icon-badge bg-indigo">📊</div>
+          <div className="card-info">
+            <h4>Course Attendance Performance Analyzer</h4>
+            <p>Interactive dashboard segregating courses performance by days and hours of active schedules. Complete with risk ratios.</p>
+          </div>
+          <span className="arrow-icon">→</span>
+        </Link>
       </div>
     </div>
   );
 }
 
-function ReportTile({
-  title,
-  description,
-  icon,
-  onGenerate,
-  disabled,
-}: {
-  title: string;
-  description: string;
-  icon: string;
-  onGenerate: () => Promise<void>;
-  disabled: boolean;
-}) {
+function QuickExportTile({ title, desc, icon, onTrigger, disabled }: { title: string; desc: string; icon: string; onTrigger: () => void; disabled: boolean }) {
   return (
-    <div className="report-tile">
-      <div className="report-tile-top">
-        <div className="report-icon">{icon}</div>
-        <div className="report-title">{title}</div>
+    <div className="card quick-export-tile">
+      <div className="tile-header">
+        <span className="tile-icon">{icon}</span>
+        <h4>{title}</h4>
       </div>
-      <div className="report-desc">{description}</div>
-      <button className="report-btn" disabled={disabled} onClick={onGenerate} type="button">
-        <span className="report-btn-icon">⬇</span>
-        Generate Report
+      <p className="tile-desc">{desc}</p>
+      <button className="tile-btn" onClick={onTrigger} disabled={disabled}>
+        ⚡ QUICK EXPORT
       </button>
     </div>
   );

@@ -38,6 +38,7 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination"
 
 // Local types if needed, otherwise use imported ones
 interface ClassDetail extends Class {}
@@ -61,6 +62,10 @@ export default function AttendancePage() {
 
     // Filter State
     const [filters, setFilters] = useState<{ course_id?: string; class_id?: string; date?: string }>({});
+
+    // Pagination State
+    const [currentPage, setCurrentPage] = useState(1);
+    const itemsPerPage = 6;
 
     useEffect(() => {
         fetchInitialData();
@@ -111,6 +116,7 @@ export default function AttendancePage() {
 
     useEffect(() => {
         if (!loading) fetchSessions();
+        setCurrentPage(1);
     }, [filters]);
 
     // Filter classes based on selected course
@@ -169,7 +175,7 @@ export default function AttendancePage() {
                 method: 'PATCH',
                 body: JSON.stringify({
                     session_id: selectedSession?.id,
-                    nfc_id: records.find(r => r.id === recordId)?.student_id,
+                    nfc_id: records.find(r => r.id === recordId)?.nfc_id,
                     status: status
                 })
             });
@@ -309,7 +315,7 @@ export default function AttendancePage() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {sessions.map((session) => {
+                                    {sessions.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map((session) => {
                                         const course = courses.find(c => c.id === session.course_id);
                                         const classDetail = classes.find(c => c.id === session.class_id);
 
@@ -365,6 +371,41 @@ export default function AttendancePage() {
                                     })}
                                 </TableBody>
                             </Table>
+                            {sessions.length > itemsPerPage && (
+                                <div className="p-4 border-t border-slate-100 flex justify-end">
+                                    <Pagination className="w-auto mx-0">
+                                        <PaginationContent>
+                                            <PaginationItem>
+                                                <PaginationPrevious 
+                                                    href="#" 
+                                                    onClick={(e) => { e.preventDefault(); setCurrentPage(p => Math.max(1, p - 1)); }}
+                                                    className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
+                                                />
+                                            </PaginationItem>
+                                            
+                                            {Array.from({ length: Math.ceil(sessions.length / itemsPerPage) }).map((_, i) => (
+                                                <PaginationItem key={i}>
+                                                    <PaginationLink 
+                                                        href="#" 
+                                                        onClick={(e) => { e.preventDefault(); setCurrentPage(i + 1); }}
+                                                        isActive={currentPage === i + 1}
+                                                    >
+                                                        {i + 1}
+                                                    </PaginationLink>
+                                                </PaginationItem>
+                                            ))}
+
+                                            <PaginationItem>
+                                                <PaginationNext 
+                                                    href="#" 
+                                                    onClick={(e) => { e.preventDefault(); setCurrentPage(p => Math.min(Math.ceil(sessions.length / itemsPerPage), p + 1)); }}
+                                                    className={currentPage >= Math.ceil(sessions.length / itemsPerPage) ? "pointer-events-none opacity-50" : ""}
+                                                />
+                                            </PaginationItem>
+                                        </PaginationContent>
+                                    </Pagination>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -648,10 +689,10 @@ export default function AttendancePage() {
                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Attachment</p>
                                         <div className="rounded-2xl border border-slate-100 overflow-hidden group">
                                             <img
-                                                src={`http://127.0.0.1:3001/${viewingPermission.img_url}`}
+                                                src={`${(import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:3001'}/${viewingPermission.img_url}`}
                                                 alt="Permission evidence"
                                                 className="w-full object-cover max-h-64 hover:scale-105 transition-transform duration-500 cursor-zoom-in"
-                                                onClick={() => window.open(`http://127.0.0.1:3001/${viewingPermission.img_url}`, '_blank')}
+                                                onClick={() => window.open(`${(import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:3001'}/${viewingPermission.img_url}`, '_blank')}
                                             />
                                         </div>
                                     </div>

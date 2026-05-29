@@ -1,4 +1,4 @@
-const BASE_URL = 'http://localhost:3001';
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:3001';
 import type { Notification } from './lib/types/student';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -209,6 +209,103 @@ export interface DepartmentAnalytics {
   top_courses: Array<{ course_id: string; course_name?: string; attendance_rate: number; session_count: number }>;
   bottom_courses: Array<{ course_id: string; course_name?: string; attendance_rate: number; session_count: number }>;
   instructor_breakdown: Array<{ instructor_id: string; instructor_name?: string; sessions: number; avg_attendance: number }>;
+}
+
+/** GET /admin/analytics/university — enriched institutional intelligence */
+export interface UniversityIntelligence {
+  meta: { generated_at: string; from?: string; to?: string };
+  kpi: {
+    total_sessions: number;
+    finished_sessions: number;
+    active_sessions: number;
+    incoming_sessions: number;
+    unique_students: number;
+    unique_instructors: number;
+    unique_course_offerings: number;
+    overall_attendance_rate: number;
+    punctuality_index: number;
+    excused_rate: number;
+    absent_rate: number;
+    late_rate: number;
+    record_completeness: number;
+  };
+  status_distribution: Array<{ status: string; count: number; pct: number }>;
+  by_day_of_week: Array<{
+    day: string;
+    attendance_rate: number;
+    punctuality_index: number;
+    sessions: number;
+    records: number;
+  }>;
+  by_hour_local: Array<{ hour: number; attendance_rate: number; sessions: number }>;
+  daily_timeline: Array<{ date: string; attendance_rate: number; sessions: number }>;
+  courses: Array<{
+    course_id: string;
+    course_code?: string;
+    course_name?: string;
+    sessions_finished: number;
+    records: number;
+    attendance_rate: number;
+    punctuality_index: number;
+    decline_score: number;
+  }>;
+  sections: Array<{
+    course_id: string;
+    class_id: string;
+    course_name?: string;
+    class_label?: string;
+    sessions_finished: number;
+    attendance_rate: number;
+    section_engagement_score: number;
+  }>;
+  instructors: Array<{
+    instructor_id: string;
+    instructor_name?: string;
+    sessions_total: number;
+    sessions_finished: number;
+    attendance_rate: number;
+    punctuality_index: number;
+    completion_proxy: number;
+  }>;
+  students_at_risk: Array<{
+    student_id: string;
+    student_name?: string;
+    sessions_count: number;
+    attendance_rate: number;
+    punctuality_index: number;
+    consistency_score: number;
+    volatility: number;
+    max_absence_streak: number;
+    risk_score: number;
+    predicted_low: boolean;
+  }>;
+  anomalies: Array<{
+    kind: string;
+    severity: string;
+    message: string;
+    session_id?: string;
+    course_name?: string;
+    instructor_name?: string;
+  }>;
+  session_heatmap: Array<{ dow: number; hour: number; value: number; sessions: number }>;
+  tap_audit: { total_taps: number; success_rate: number; duplicate_taps: number; unknown_card_taps: number };
+  cohort_by_class_year: Array<{ label: string; attendance_rate: number; count: number }>;
+}
+
+export interface ReportBuildRequest {
+  report_type: string;
+  from?: string;
+  to?: string;
+  include_charts?: boolean;
+}
+
+export interface ReportDocument {
+  title: string;
+  subtitle: string;
+  generated_at: string;
+  executive_summary: string;
+  kpis: Array<{ title: string; items: string[][] }>;
+  tables: Array<{ title: string; columns: string[]; rows: string[][] }>;
 }
 
 let onTokenUpdate: ((token: string | null) => void) | null = null;
@@ -439,6 +536,26 @@ export const api = {
 
   // ── Admin / Department Head ──────────────────────────────────────────────────
   adminAnalytics: () => request<DepartmentAnalytics>('/admin/analytics'),
+
+  /** Institutional analytics (Chart.js dashboards consume this). */
+  universityAnalytics: (params?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.from) q.set('from', params.from);
+    if (params?.to) q.set('to', params.to);
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return request<UniversityIntelligence>(`/admin/analytics/university${qs}`);
+  },
+
+  adminStudentAnalytics: (studentId: string, params?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.from) q.set('from', params.from);
+    if (params?.to) q.set('to', params.to);
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return request<Record<string, unknown>>(`/admin/analytics/student/${studentId}${qs}`);
+  },
+
+  buildReport: (body: ReportBuildRequest) =>
+    request<ReportDocument>('/admin/reports/build', { method: 'POST', body: JSON.stringify(body) }),
 
   // ── Notifications ────────────────────────────────────────────────────────────
   getNotifications: () => request<Notification[]>('/notifications'),

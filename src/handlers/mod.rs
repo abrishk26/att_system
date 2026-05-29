@@ -8,19 +8,21 @@ use jwt_simple::prelude::*;
 use crate::models::{LogoutRequest, NfcLoginRequest, TokenDenylist, StudentProfile};
 use crate::schema::token_denylist;
 
+pub mod analytics;
 pub mod instructors;
 pub mod students;
 pub mod notifications;
 
-const JWT_SECRET: &[u8] = b"raw_llkey_hastobeverylongtobestrongbuttheymakeitatruntime";
+
 
 pub async fn login_handler(
     State(state): State<AppState>,
     Json(payload): Json<LoginData>,
 ) -> Result<(StatusCode, Json<Tokens>), (StatusCode, Json<ErrorResponse>)> {
+    let login_url = format!("{}/login", state.data_source_url);
     let response = state
         .client
-        .request(Method::POST, "http://127.0.0.1:3000/login")
+        .request(Method::POST, &login_url)
         .json(&payload)
         .send()
         .await
@@ -41,7 +43,7 @@ pub async fn login_handler(
             )
         })?;
         log::info!("Data source login success: user_id={}, role={}", json.user_id, json.role);
-        let (access_token, refresh_token) = issue_tokens(&json.user_id, &json.role)?;
+        let (access_token, refresh_token) = issue_tokens(&state.jwt_key(), &json.user_id, &json.role)?;
         log::info!("Tokens issued for user_id={}, role={}", json.user_id, json.role);
         Ok((StatusCode::OK, Json(Tokens { access_token, refresh_token, role: json.role })))
     } else if response.status() == StatusCode::BAD_REQUEST {
@@ -65,7 +67,7 @@ pub async fn refresh_handler(
     use diesel::{ExpressionMethods, QueryDsl};
     use crate::helpers::internal_error;
 
-    let key = HS256Key::from_bytes(JWT_SECRET);
+    let key = state.jwt_key();
 
     let claims = key
         .verify_token::<CustomClaims>(&payload.refresh_token, None)
@@ -102,7 +104,7 @@ pub async fn refresh_handler(
         Json(ErrorResponse { message: "invalid token subject".to_string() }),
     ))?;
 
-    let (access_token, refresh_token) = issue_tokens(&user_id, &role)?;
+    let (access_token, refresh_token) = issue_tokens(&state.jwt_key(), &user_id, &role)?;
     Ok((StatusCode::OK, Json(Tokens { access_token, refresh_token, role })))
 }
 
@@ -122,7 +124,7 @@ pub async fn logout_handler(
     use crate::helpers::internal_error;
     use chrono::Utc;
 
-    let key = HS256Key::from_bytes(JWT_SECRET);
+    let key = state.jwt_key();
 
     let claims = key
         .verify_token::<CustomClaims>(&payload.refresh_token, None)
@@ -162,11 +164,12 @@ pub async fn nfc_login_handler(
     Json(payload): Json<NfcLoginRequest>,
 ) -> Result<(StatusCode, Json<Tokens>), (StatusCode, Json<ErrorResponse>)> {
     // Look up student by NFC ID from data_source
+    let nfc_url = format!("{}/student/profile?nfc_id={}", state.data_source_url, payload.nfc_id);
     let response = state
         .client
         .request(
             Method::GET,
-            format!("http://127.0.0.1:3000/student/profile?nfc_id={}", payload.nfc_id),
+            &nfc_url,
         )
         .send()
         .await
@@ -197,8 +200,8 @@ pub async fn nfc_login_handler(
     })?;
 
     let user_id = profile.id.to_string();
-    let role = "student".to_string();
-    let (access_token, refresh_token) = issue_tokens(&user_id, &role)?;
+    let role = profile.role;
+    let (access_token, refresh_token) = issue_tokens(&state.jwt_key(), &user_id, &role)?;
 
     log::info!("NFC login success: nfc_id={}, user_id={}, role={}", payload.nfc_id, user_id, role);
     Ok((StatusCode::OK, Json(Tokens { access_token, refresh_token, role })))
@@ -207,10 +210,11 @@ pub async fn nfc_login_handler(
 // ── Internal helper ───────────────────────────────────────────────────────────
 
 fn issue_tokens(
+    key: &HS256Key,
     user_id: &str,
     role: &str,
 ) -> Result<(String, String), (StatusCode, Json<ErrorResponse>)> {
-    let key = HS256Key::from_bytes(JWT_SECRET);
+    let key = key;
 
     let access_claims = Claims::with_custom_claims(
         CustomClaims { role: role.to_string() },

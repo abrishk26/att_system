@@ -8,12 +8,11 @@ import type { DashboardStats, AttendanceTrend, AttendanceDistribution, CoursePer
 import { useAuth } from '../../AuthContext';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { Badge } from "../../components/ui/badge";
-import { BookOpen, Calendar, Clock, ArrowRight } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../components/ui/card";
+import { BookOpen, Calendar, Clock, ArrowRight, Users, CheckCircle, GraduationCap, BarChart3 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import './Dashboard.css';
 
-const PIE_COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444'];
-
+const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444'];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const pctFormatter = (v: any) => `${v ?? 0}%`;
@@ -64,251 +63,280 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="dash-loading">
-        <div className="spinner" />
-        <span>Loading dashboard...</span>
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-muted-foreground">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        <span className="text-sm font-medium">Loading dashboard...</span>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="dash-error">
-        <span>⚠ {error}</span>
-        <button onClick={load}>Retry</button>
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-destructive">
+        <span className="text-sm font-medium">⚠ {error}</span>
+        <button onClick={load} className="px-4 py-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 font-semibold text-sm transition-colors">Retry</button>
       </div>
     );
   }
 
   return (
-    <div className="dashboard space-y-8 pb-10">
-      {/* Stat Cards */}
-      <div className="stat-cards">
-        <StatCard
-          label="Total Sessions"
-          value={stats?.totalSessions ?? 0}
-          icon="👥"
-          color="#3b82f6"
-        />
-        <StatCard
-          label="Present Today"
-          value={stats?.presentToday ?? 0}
-          icon="✅"
-          color="#22c55e"
-        />
-        <StatCard
-          label="Course Completion"
-          value={`${stats?.completionRate ?? 0}%`}
-          icon="📚"
-          color="#a855f7"
-        />
-        <StatCard
-          label="Avg. Attendance"
-          value={`${stats?.avgAttendance ?? 0}%`}
-          icon="📊"
-          color="#f59e0b"
-        />
+    <div className="space-y-6 pb-10 max-w-[1600px] mx-auto animate-fade-in">
+      {/* Title Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border pb-6">
+        <div>
+          <h2 className="text-3xl font-bold tracking-tight text-foreground">Dashboard</h2>
+          <p className="text-sm text-muted-foreground">Real-time campus-wide attendance stats and analytics.</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Recent Courses Table Section */}
-          <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 flex flex-col">
-              <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center gap-3">
-                      <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
-                          <BookOpen size={20} />
-                      </div>
-                      <h3 className="font-bold text-slate-900">Course Overview</h3>
-                  </div>
-                  <Link to="/instructor/courses" className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1 group">
-                      View All <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
-                  </Link>
-              </div>
-              
-              <div className="flex-1 rounded-2xl border border-slate-50 overflow-hidden">
-                <Table>
-                    <TableHeader className="bg-slate-50/50">
-                        <TableRow className="hover:bg-transparent">
-                            <TableHead className="font-bold text-slate-500">Course</TableHead>
-                            <TableHead className="text-right font-bold text-slate-500 px-6">Attendance</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {performance.slice(0, 5).map((p, i) => (
-                            <TableRow key={i} className="hover:bg-slate-50/50 transition-colors">
-                                <TableCell>
-                                    <div className="flex flex-col">
-                                        <span className="font-bold text-slate-900 text-sm">{p.course}</span>
-                                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Departmental</span>
-                                    </div>
-                                </TableCell>
-                                <TableCell className="text-right px-6">
-                                    <span className="font-black text-indigo-600">{p.attendance}%</span>
-                                </TableCell>
-                            </TableRow>
-                        ))}
-                    </TableBody>
-                </Table>
-              </div>
-          </div>
+      {/* Stat Cards */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Card className="bg-card text-card-foreground border-border shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total Sessions</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold tracking-tight">{stats?.totalSessions ?? 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">Recorded sessions</p>
+          </CardContent>
+        </Card>
 
-          {/* Recent Attendances Table Section */}
-          <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 flex flex-col">
-              <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center gap-3">
-                      <div className="p-2 bg-emerald-50 rounded-xl text-emerald-600">
-                          <Calendar size={20} />
-                      </div>
-                      <h3 className="font-bold text-slate-900">Live Attendances</h3>
-                  </div>
-                  <Link to="/admin/sessions" className="text-xs font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1 group">
-                      Manage <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
-                  </Link>
-              </div>
+        <Card className="bg-card text-card-foreground border-border shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Present Today</CardTitle>
+            <CheckCircle className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold tracking-tight">{stats?.presentToday ?? 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">Active live student count</p>
+          </CardContent>
+        </Card>
 
-              <div className="flex-1 rounded-2xl border border-slate-50 overflow-hidden">
-                <Table>
-                    <TableHeader className="bg-slate-50/50">
-                        <TableRow className="hover:bg-transparent">
-                            <TableHead className="font-bold text-slate-500">Session ID</TableHead>
-                            <TableHead className="text-center font-bold text-slate-500">Status</TableHead>
-                            <TableHead className="text-right font-bold text-slate-500 px-6">Time</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {recentSessions.map((s, i) => (
-                            <TableRow key={i} className="hover:bg-slate-50/50 transition-colors">
-                                <TableCell className="font-mono text-[10px] text-slate-500 uppercase tracking-tighter">
-                                    {s.id.substring(0, 8)}
-                                </TableCell>
-                                <TableCell className="text-center">
-                                    <Badge className={s.status === 'active' ? 'bg-emerald-500' : 'bg-slate-200 text-slate-600 border-none shadow-none'}>
-                                        {s.status}
-                                    </Badge>
-                                </TableCell>
-                                <TableCell className="text-right px-6">
-                                    <div className="flex items-center justify-end gap-1.5 text-slate-400">
-                                        <Clock size={12} />
-                                        <span className="text-xs font-medium">Recent</span>
-                                    </div>
-                                </TableCell>
-                            </TableRow>
-                        ))}
-                    </TableBody>
-                </Table>
+        <Card className="bg-card text-card-foreground border-border shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Course Completion</CardTitle>
+            <GraduationCap className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold tracking-tight">{stats?.completionRate ?? 0}%</div>
+            <p className="text-xs text-muted-foreground mt-1">Overall completion rate</p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card text-card-foreground border-border shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Avg. Attendance</CardTitle>
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold tracking-tight">{stats?.avgAttendance ?? 0}%</div>
+            <p className="text-xs text-muted-foreground mt-1">Global average performance</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Course Overview Table Card */}
+        <Card className="bg-card text-card-foreground border-border shadow-sm">
+          <CardHeader className="flex items-center justify-between flex-row space-y-0 pb-4 border-b border-border">
+            <div className="flex items-center gap-2">
+              <div className="p-2 bg-secondary rounded-lg text-secondary-foreground">
+                <BookOpen size={16} />
               </div>
-          </div>
+              <div>
+                <CardTitle className="text-base font-bold">Course Overview</CardTitle>
+                <CardDescription className="text-xs text-muted-foreground">Subject performance analytics</CardDescription>
+              </div>
+            </div>
+            <Link to="/instructor/courses" className="text-xs font-semibold text-primary hover:underline flex items-center gap-1 group">
+              View All <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+            </Link>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <div className="rounded-md border border-border overflow-hidden bg-background">
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow className="hover:bg-transparent border-b border-border">
+                    <TableHead className="font-bold text-muted-foreground text-xs py-3 pl-4">Course</TableHead>
+                    <TableHead className="text-right font-bold text-muted-foreground text-xs py-3 pr-4">Attendance</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {performance.slice(0, 5).map((p, i) => (
+                    <TableRow key={i} className="hover:bg-muted/50 border-b border-border transition-colors last:border-b-0">
+                      <TableCell className="py-3 pl-4">
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-foreground text-sm">{p.course}</span>
+                          <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mt-0.5">Departmental</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right py-3 pr-4">
+                        <span className="font-bold text-primary">{p.attendance}%</span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Live Attendances Table Card */}
+        <Card className="bg-card text-card-foreground border-border shadow-sm">
+          <CardHeader className="flex items-center justify-between flex-row space-y-0 pb-4 border-b border-border">
+            <div className="flex items-center gap-2">
+              <div className="p-2 bg-secondary rounded-lg text-secondary-foreground">
+                <Calendar size={16} />
+              </div>
+              <div>
+                <CardTitle className="text-base font-bold">Live Attendances</CardTitle>
+                <CardDescription className="text-xs text-muted-foreground">Recent class session history</CardDescription>
+              </div>
+            </div>
+            <Link to="/admin/sessions" className="text-xs font-semibold text-primary hover:underline flex items-center gap-1 group">
+              Manage <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+            </Link>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <div className="rounded-md border border-border overflow-hidden bg-background">
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow className="hover:bg-transparent border-b border-border">
+                    <TableHead className="font-bold text-muted-foreground text-xs py-3 pl-4">Session ID</TableHead>
+                    <TableHead className="text-center font-bold text-muted-foreground text-xs py-3">Status</TableHead>
+                    <TableHead className="text-right font-bold text-muted-foreground text-xs py-3 pr-4">Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {recentSessions.map((s, i) => (
+                    <TableRow key={i} className="hover:bg-muted/50 border-b border-border transition-colors last:border-b-0">
+                      <TableCell className="font-mono text-xs text-muted-foreground py-3 pl-4">
+                        {s.id.substring(0, 8).toUpperCase()}
+                      </TableCell>
+                      <TableCell className="text-center py-3">
+                        <Badge className={s.status === 'active' ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-muted text-muted-foreground border-none shadow-none hover:bg-muted'}>
+                          {s.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right py-3 pr-4">
+                        <div className="flex items-center justify-end gap-1 text-muted-foreground">
+                          <Clock size={12} />
+                          <span className="text-xs font-medium">Recent</span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Line Chart */}
-      <div className="chart-card full !rounded-[2rem] border-slate-100">
-        <h3 className="!font-black !text-slate-900 !text-xl mb-4">Department-Wide Attendance Trends</h3>
-        <p className="chart-sub">Weekly attendance rate across all classes</p>
-        <ResponsiveContainer width="100%" height={260}>
-          <LineChart data={trends} margin={{ top: 10, right: 30, left: 0, bottom: 10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-            <XAxis dataKey="day" stroke="#9ca3af" tick={{ fontSize: 12, fill: '#6b7280' }} />
-            <YAxis stroke="#9ca3af" tick={{ fontSize: 12, fill: '#6b7280' }} domain={[0, 100]} unit="%" />
-            <Tooltip
-              contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, fontSize: 13 }}
-              formatter={pctFormatter}
-            />
-            <Legend wrapperStyle={{ fontSize: 13, paddingTop: 10 }} />
-            <Line
-              type="monotone"
-              dataKey="actual"
-              stroke="#3b82f6"
-              strokeWidth={3}
-              dot={{ r: 4, fill: '#3b82f6', strokeWidth: 2, stroke: '#fff' }}
-              name="Actual Attendance (%)"
-            />
-            <Line
-              type="monotone"
-              dataKey="target"
-              stroke="#22c55e"
-              strokeWidth={3}
-              strokeDasharray="5 5"
-              dot={false}
-              name="Target (%)"
-            />
-          </LineChart>
-        </ResponsiveContainer>
+      <Card className="bg-card text-card-foreground border-border shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-lg font-bold">Department-Wide Attendance Trends</CardTitle>
+          <CardDescription className="text-xs text-muted-foreground">Weekly attendance rate across all classes</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={trends} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                <XAxis dataKey="day" stroke="var(--muted-foreground)" tick={{ fontSize: 11, fill: 'var(--foreground)' }} />
+                <YAxis stroke="var(--muted-foreground)" tick={{ fontSize: 12, fill: 'var(--foreground)' }} domain={[0, 100]} unit="%" />
+                <Tooltip
+                  contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13, color: 'var(--foreground)' }}
+                  formatter={pctFormatter}
+                />
+                <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10, color: 'var(--foreground)' }} />
+                <Line
+                  type="monotone"
+                  dataKey="actual"
+                  stroke="#3b82f6"
+                  strokeWidth={3}
+                  dot={{ r: 4, fill: '#3b82f6', strokeWidth: 2, stroke: '#fff' }}
+                  name="Actual Attendance (%)"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="target"
+                  stroke="#10b981"
+                  strokeWidth={3}
+                  strokeDasharray="5 5"
+                  dot={false}
+                  name="Target (%)"
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Pie + Bar Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="bg-card text-card-foreground border-border shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base font-bold">Attendance Distribution</CardTitle>
+            <CardDescription className="text-xs text-muted-foreground">Student attendance rate breakdown</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {pieData.length > 0 ? (
+              <div className="h-[220px] w-full flex items-center justify-center">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={80}
+                      dataKey="value"
+                      label={({ percent }) => `${((percent ?? 0) * 100).toFixed(0)}%`}
+                      labelLine={false}
+                    >
+                      {pieData.map((_, i) => (
+                        <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--foreground)' }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-[220px] text-xs text-muted-foreground">No completed sessions yet</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card text-card-foreground border-border shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-base font-bold">Performance Analytics</CardTitle>
+            <CardDescription className="text-xs text-muted-foreground">Attendance vs. participation by course</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {performance.length > 0 ? (
+              <div className="h-[220px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={performance} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="course" stroke="var(--muted-foreground)" tick={{ fontSize: 11, fill: 'var(--foreground)' }} />
+                    <YAxis stroke="var(--muted-foreground)" tick={{ fontSize: 12, fill: 'var(--foreground)' }} domain={[0, 100]} unit="%" />
+                    <Tooltip
+                      contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--foreground)' }}
+                      formatter={pctFormatter}
+                    />
+                    <Bar dataKey="attendance" fill="#8b5cf6" name="Attendance %" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-[220px] text-xs text-muted-foreground">No course performance data yet</div>
+            )}
+          </CardContent>
+        </Card>
       </div>
-
-      {/* Pie + Bar */}
-      <div className="charts-row">
-        <div className="chart-card !rounded-[2rem] border-slate-100">
-          <h3 className="!font-black !text-slate-900">Attendance Distribution</h3>
-          <p className="chart-sub">Student attendance rate breakdown</p>
-          {pieData.length > 0 ? (
-            <>
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie
-                    data={pieData}
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={85}
-                    dataKey="value"
-                    label={({ percent }) => `${((percent ?? 0) * 100).toFixed(0)}%`}
-                    labelLine={false}
-                  >
-                    {pieData.map((_, i) => (
-                      <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10 }} />
-                </PieChart>
-              </ResponsiveContainer>
-            </>
-          ) : (
-            <div className="empty-state">No completed sessions yet</div>
-          )}
-        </div>
-
-        <div className="chart-card !rounded-[2rem] border-slate-100">
-          <h3 className="!font-black !text-slate-900">Performance Analytics</h3>
-          <p className="chart-sub">Attendance vs. participation by course</p>
-          {performance.length > 0 ? (
-            <>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={performance} margin={{ top: 10, right: 10, left: 0, bottom: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis dataKey="course" stroke="#9ca3af" tick={{ fontSize: 11, fill: '#6b7280' }} />
-                  <YAxis stroke="#9ca3af" tick={{ fontSize: 12, fill: '#6b7280' }} domain={[0, 100]} unit="%" />
-                  <Tooltip
-                    contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10 }}
-                    formatter={pctFormatter}
-                  />
-                  <Bar dataKey="attendance" fill="#8b5cf6" name="Attendance %" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </>
-          ) : (
-            <div className="empty-state">No course performance data yet</div>
-          )}
-        </div>
-      </div>
-
-    </div>
-  );
-}
-
-interface StatCardProps {
-  label: string;
-  value: string | number;
-  icon: string;
-  color: string;
-}
-
-function StatCard({ label, value, icon, color }: StatCardProps) {
-  return (
-    <div className="stat-card !rounded-[2rem] !border-slate-50">
-      <div className="stat-top">
-        <div className="stat-icon" style={{ background: `${color}22`, color }}>{icon}</div>
-      </div>
-      <div className="stat-value !text-3xl !font-black !text-slate-900">{value}</div>
-      <div className="stat-label !font-bold !text-slate-400 !uppercase !tracking-widest !text-[10px]">{label}</div>
     </div>
   );
 }

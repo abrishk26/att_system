@@ -104,7 +104,7 @@ export default function InstructorPermissionsPage() {
             <option value="">Choose a session…</option>
             {sessions.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.course?.name ?? s.course_id} · {s.status}
+                {s.course?.name ?? s.course_id} · {new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
               </option>
             ))}
           </select>

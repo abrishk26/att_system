@@ -69,13 +69,13 @@ const HomePage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="p-8 space-y-8 animate-pulse">
+      <div className="p-8 space-y-8 animate-pulse max-w-[1600px] mx-auto">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map(i => <div key={i} className="h-24 bg-slate-100 rounded-xl"></div>)}
+          {[1, 2, 3, 4].map(i => <div key={i} className="h-24 bg-muted rounded-xl"></div>)}
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 h-96 bg-slate-100 rounded-2xl"></div>
-          <div className="h-96 bg-slate-100 rounded-2xl"></div>
+          <div className="lg:col-span-2 h-96 bg-muted rounded-2xl"></div>
+          <div className="h-96 bg-muted rounded-2xl"></div>
         </div>
       </div>
     );
@@ -103,7 +103,7 @@ const HomePage: React.FC = () => {
     datasets: [
       {
         data: [metrics?.overall_attendance || 0, 100 - (metrics?.overall_attendance || 0)],
-        backgroundColor: ['#6366f1', '#f1f5f9'],
+        backgroundColor: ['#6366f1', 'rgba(255, 255, 255, 0.1)'],
         borderWidth: 0,
       },
     ],
@@ -125,18 +125,18 @@ const HomePage: React.FC = () => {
   };
 
   const statusBadge = (rate: number) => {
-    if (rate >= 85) return <Badge className="bg-emerald-500 hover:bg-emerald-600">Excellent Standing</Badge>;
-    if (rate >= 75) return <Badge className="bg-amber-500 hover:bg-amber-600">Good Standing</Badge>;
+    if (rate >= 85) return <Badge className="bg-emerald-500 hover:bg-emerald-600 text-white">Excellent Standing</Badge>;
+    if (rate >= 75) return <Badge className="bg-amber-500 hover:bg-amber-600 text-white">Good Standing</Badge>;
     return <Badge variant="destructive">Warning</Badge>;
   };
 
   return (
-    <div className="p-4 md:p-8 space-y-8 max-w-[1600px] mx-auto">
+    <div className="p-4 md:p-8 space-y-8 max-w-[1600px] mx-auto transition-colors duration-200">
       {/* Command Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-slate-100 pb-8">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-border pb-6">
         <div>
-          <h1 className="text-3xl font-black text-slate-900 flex items-center gap-3">
-            <Layers className="text-indigo-600" size={32} />
+          <h1 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-3">
+            <Layers className="text-primary" size={28} />
             Student Dashboard
           </h1>
         </div>
@@ -144,69 +144,69 @@ const HomePage: React.FC = () => {
 
       {/* Metric Tiles */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border-none shadow-sm bg-indigo-600 text-white">
+        <Card className="border-none shadow-sm bg-primary text-primary-foreground">
           <CardContent className="p-6">
             <div className="flex items-center justify-between mb-4">
-              <TrendingUp size={20} className="text-indigo-200" />
-              <Badge variant="secondary" className="bg-white/10 text-white border-none">Live Metric</Badge>
+              <TrendingUp size={20} className="text-primary-foreground/80" />
+              <Badge variant="secondary" className="bg-primary-foreground/10 text-primary-foreground border-none shadow-none">Live Metric</Badge>
             </div>
-            <p className="text-sm font-bold text-indigo-100 uppercase tracking-wider">Overall Rate</p>
-            <h3 className="text-4xl font-black mt-1">{Math.round(metrics?.overall_attendance || 0)}%</h3>
+            <p className="text-xs font-bold uppercase tracking-wider">Overall Rate</p>
+            <h3 className="text-3xl font-extrabold mt-1">{Math.round(metrics?.overall_attendance || 0)}%</h3>
           </CardContent>
         </Card>
 
-        <Card className="border-slate-100 shadow-sm">
+        <Card className="bg-card text-card-foreground border-border shadow-sm">
           <CardContent className="p-6">
             <div className="flex items-center justify-between mb-4">
-              <BookOpen size={20} className="text-purple-600" />
+              <BookOpen size={20} className="text-primary" />
               <Zap size={16} className="text-amber-500" />
             </div>
-            <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Total Courses</p>
-            <h3 className="text-4xl font-black mt-1 text-slate-900">{metrics?.courses_performance.length}</h3>
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total Courses</p>
+            <h3 className="text-3xl font-extrabold mt-1 text-foreground">{metrics?.courses_performance.length}</h3>
           </CardContent>
         </Card>
 
-        <Card className="border-slate-100 shadow-sm">
+        <Card className="bg-card text-card-foreground border-border shadow-sm">
           <CardContent className="p-6">
             <div className="flex items-center justify-between mb-4">
-              <Target size={20} className="text-pink-600" />
-              <Award size={16} className="text-indigo-600" />
+              <Target size={20} className="text-pink-600 dark:text-pink-400" />
+              <Award size={16} className="text-primary" />
             </div>
-            <p className="text-sm font-bold text-slate-400 uppercase tracking-wider">Target Goal</p>
-            <h3 className="text-4xl font-black mt-1 text-slate-900">85%</h3>
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Target Goal</p>
+            <h3 className="text-3xl font-extrabold mt-1 text-foreground">85%</h3>
           </CardContent>
         </Card>
 
-        <Card className="border-slate-100 shadow-sm">
-          <CardContent className="p-6 text-center flex flex-col items-center justify-center">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Eligibility Status</p>
+        <Card className="bg-card text-card-foreground border-border shadow-sm">
+          <CardContent className="p-6 text-center flex flex-col items-center justify-center min-h-[128px]">
+            <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-2">Eligibility Status</p>
             {statusBadge(metrics?.overall_attendance || 0)}
           </CardContent>
         </Card>
       </div>
 
       {/* Main Command Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
         {/* Left Column - Performance Breakdown */}
-        <div className="lg:col-span-8 space-y-8">
+        <div className="lg:col-span-8 space-y-6">
           <Tabs defaultValue="trend" className="w-full">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-black text-slate-900">Performance Analytics</h2>
-              <TabsList className="bg-slate-100/50 p-1">
-                <TabsTrigger value="trend">Attendance Trend</TabsTrigger>
-                <TabsTrigger value="radar">Subject Radar</TabsTrigger>
+              <h2 className="text-xl font-bold tracking-tight text-foreground">Performance Analytics</h2>
+              <TabsList className="bg-muted p-1 rounded-lg">
+                <TabsTrigger value="trend" className="rounded-md">Attendance Trend</TabsTrigger>
+                <TabsTrigger value="radar" className="rounded-md">Subject Radar</TabsTrigger>
               </TabsList>
             </div>
 
             <TabsContent value="trend">
-              <Card className="border-slate-50 shadow-sm">
+              <Card className="bg-card text-card-foreground border-border shadow-sm">
                 <CardHeader>
-                  <CardTitle className="text-lg">Consistency Map</CardTitle>
-                  <CardDescription>Visual tracker of your last 7 sessions.</CardDescription>
+                  <CardTitle className="text-base font-bold text-foreground">Consistency Map</CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">Visual tracker of your last 7 sessions.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="h-[400px] w-full">
+                  <div className="h-[300px] w-full">
                     <Line
                       data={lineData}
                       options={{
@@ -214,7 +214,7 @@ const HomePage: React.FC = () => {
                         maintainAspectRatio: false,
                         scales: {
                           y: { display: false },
-                          x: { grid: { display: false } }
+                          x: { grid: { display: false }, ticks: { color: 'var(--foreground)' } }
                         },
                         plugins: { legend: { display: false } }
                       }}
@@ -225,13 +225,13 @@ const HomePage: React.FC = () => {
             </TabsContent>
 
             <TabsContent value="radar">
-              <Card className="border-slate-50 shadow-sm">
+              <Card className="bg-card text-card-foreground border-border shadow-sm">
                 <CardHeader>
-                  <CardTitle className="text-lg">Curriculum Radar</CardTitle>
-                  <CardDescription>Attendance distribution across your registered courses.</CardDescription>
+                  <CardTitle className="text-base font-bold text-foreground">Curriculum Radar</CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">Attendance distribution across your registered courses.</CardDescription>
                 </CardHeader>
-                <CardContent className="flex justify-center p-8">
-                  <div className="h-[400px] w-full max-w-[500px]">
+                <CardContent className="flex justify-center p-6">
+                  <div className="h-[300px] w-full max-w-[400px]">
                     <Radar
                       data={radarData}
                       options={{
@@ -240,7 +240,8 @@ const HomePage: React.FC = () => {
                           r: {
                             angleLines: { display: false },
                             suggestedMin: 0,
-                            suggestedMax: 100
+                            suggestedMax: 100,
+                            ticks: { display: false }
                           }
                         }
                       }}
@@ -251,51 +252,53 @@ const HomePage: React.FC = () => {
             </TabsContent>
           </Tabs>
 
-          <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
-            <Table>
-              <TableHeader className="bg-slate-50/50">
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="font-bold text-slate-500 pl-6">Course Name</TableHead>
-                  <TableHead className="text-center font-bold text-slate-500">Analytics</TableHead>
-                  <TableHead className="text-right font-bold text-slate-500 pr-6">Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {metrics?.courses_performance.map((cp, i) => (
-                  <TableRow key={i} className="hover:bg-slate-50/50 transition-colors group">
-                    <TableCell className="pl-6">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
-                          <BookOpen size={16} />
-                        </div>
-                        <span className="font-bold text-slate-900">{cp.course_name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex flex-col items-center gap-1">
-                        <span className="text-sm font-black text-indigo-600">{Math.round(cp.percentage)}%</span>
-                        <div className="w-16 h-1 bg-slate-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-indigo-500" style={{ width: `${cp.percentage}%` }}></div>
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right pr-6">
-                      <Badge variant="outline" className={cp.percentage < 75 ? 'border-rose-100 text-rose-500' : 'border-emerald-100 text-emerald-500'}>
-                        {cp.percentage < 75 ? 'At Risk' : 'Healthy'}
-                      </Badge>
-                    </TableCell>
+          <div className="bg-card text-card-foreground rounded-xl border border-border overflow-hidden shadow-sm transition-colors">
+            <div className="overflow-hidden rounded-xl border border-border bg-background">
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow className="hover:bg-transparent border-b border-border">
+                    <TableHead className="font-bold text-muted-foreground text-xs pl-4 py-3">Course Name</TableHead>
+                    <TableHead className="text-center font-bold text-muted-foreground text-xs py-3">Analytics</TableHead>
+                    <TableHead className="text-right font-bold text-muted-foreground text-xs pr-4 py-3">Status</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {metrics?.courses_performance.map((cp, i) => (
+                    <TableRow key={i} className="hover:bg-muted/50 border-b border-border transition-colors last:border-b-0 group">
+                      <TableCell className="pl-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center text-muted-foreground group-hover:text-primary transition-colors">
+                            <BookOpen size={16} />
+                          </div>
+                          <span className="font-bold text-foreground text-sm">{cp.course_name}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center py-3">
+                        <div className="flex flex-col items-center gap-1">
+                          <span className="text-sm font-bold text-primary">{Math.round(cp.percentage)}%</span>
+                          <div className="w-16 h-1 bg-muted rounded-full overflow-hidden">
+                            <div className="h-full bg-primary" style={{ width: `${cp.percentage}%` }}></div>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right pr-4 py-3">
+                        <Badge variant="outline" className={cp.percentage < 75 ? 'border-rose-200 text-rose-500' : 'border-emerald-200 text-emerald-500'}>
+                          {cp.percentage < 75 ? 'At Risk' : 'Healthy'}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         </div>
 
         {/* Right Column - Status */}
-        <div className="lg:col-span-4 space-y-8">
-          <Card className="border-slate-50 shadow-md">
+        <div className="lg:col-span-4 space-y-6">
+          <Card className="bg-card text-card-foreground border-border shadow-sm">
             <CardHeader>
-              <CardTitle className="text-lg">Overall Engagement</CardTitle>
+              <CardTitle className="text-base font-bold text-foreground">Overall Engagement</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col items-center">
               <div className="relative h-64 w-64 mb-6">
@@ -307,24 +310,24 @@ const HomePage: React.FC = () => {
                   }}
                 />
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-4xl font-black text-slate-900">{Math.round(metrics?.overall_attendance || 0)}%</span>
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Attendance</span>
+                  <span className="text-4xl font-extrabold text-foreground">{Math.round(metrics?.overall_attendance || 0)}%</span>
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mt-1">Attendance</span>
                 </div>
               </div>
-              <div className="w-full space-y-4 pt-4 border-t border-slate-50">
+              <div className="w-full space-y-3 pt-4 border-t border-border">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-indigo-500"></div>
-                    <span className="text-sm font-bold text-slate-600">Present</span>
+                    <div className="w-2.5 h-2.5 rounded-full bg-primary"></div>
+                    <span className="text-xs font-bold text-muted-foreground">Present</span>
                   </div>
-                  <span className="text-sm font-black text-slate-900">{Math.round(metrics?.overall_attendance || 0)}%</span>
+                  <span className="text-xs font-bold text-foreground">{Math.round(metrics?.overall_attendance || 0)}%</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-slate-100"></div>
-                    <span className="text-sm font-bold text-slate-600">Unaccounted</span>
+                    <div className="w-2.5 h-2.5 rounded-full bg-muted"></div>
+                    <span className="text-xs font-bold text-muted-foreground">Unaccounted</span>
                   </div>
-                  <span className="text-sm font-black text-slate-900">{100 - Math.round(metrics?.overall_attendance || 0)}%</span>
+                  <span className="text-xs font-bold text-foreground">{100 - Math.round(metrics?.overall_attendance || 0)}%</span>
                 </div>
               </div>
             </CardContent>

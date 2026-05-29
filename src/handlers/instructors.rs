@@ -104,7 +104,7 @@ pub async fn create_record_handler(
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
     let session = sessions::table.find(payload.session_id).get_result::<Session>(&mut conn).await.map_err(internal_error)?;
-    let response = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student?course_id={}&class_id={}", session.course_id, session.class_id)).send().await.map_err(internal_error)?;
+    let response = state.client.request(Method::GET, format!("{}/student?course_id={}&class_id={}", state.data_source_url, session.course_id, session.class_id)).send().await.map_err(internal_error)?;
     let students = match response.status() {
         StatusCode::OK => response.json::<Vec<StudentProfile>>().await.map_err(internal_error)?,
         _ => return Err((response.status(), Json(ErrorResponse { message: "failed to fetch students".to_string() }))),
@@ -144,13 +144,13 @@ pub async fn get_profile(
     State(state): State<AppState>,
     ClaimsExtractor { user_id, role: _ }: ClaimsExtractor,
 ) -> Result<(StatusCode, Json<UserProfile>), (StatusCode, Json<ErrorResponse>)> {
-    let response = state.client.request(Method::GET, format!("http://127.0.0.1:3000/user/{}", user_id)).send().await.map_err(internal_error)?;
+    let response = state.client.request(Method::GET, format!("{}/user/{}", state.data_source_url, user_id)).send().await.map_err(internal_error)?;
     if response.status() != StatusCode::OK {
         return Err((response.status(), Json(ErrorResponse { message: "failed to fetch profile".to_string() })));
     }
     let mut profile = response.json::<UserProfile>().await.map_err(internal_error)?;
     if profile.role == "student" {
-        let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?id={}", user_id)).send().await.map_err(internal_error)?;
+        let r = state.client.request(Method::GET, format!("{}/student/profile?id={}", state.data_source_url, user_id)).send().await.map_err(internal_error)?;
         if r.status() == StatusCode::OK {
             if let Ok(sp) = r.json::<StudentProfile>().await { profile.nfc_id = Some(sp.nfc_id); }
         }
@@ -163,7 +163,7 @@ pub async fn get_course_details(
     Path(course_id): Path<Uuid>,
     _: ClaimsExtractor,
 ) -> Result<(StatusCode, Json<Course>), (StatusCode, Json<ErrorResponse>)> {
-    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/course/{}", course_id)).send().await.map_err(internal_error)?;
+    let r = state.client.request(Method::GET, format!("{}/course/{}", state.data_source_url, course_id)).send().await.map_err(internal_error)?;
     if r.status() != StatusCode::OK { return Err((r.status(), Json(ErrorResponse { message: "failed to fetch course".to_string() }))); }
     Ok((StatusCode::OK, Json(r.json::<Course>().await.map_err(internal_error)?)))
 }
@@ -173,7 +173,7 @@ pub async fn get_class_details(
     Path(class_id): Path<Uuid>,
     _: ClaimsExtractor,
 ) -> Result<(StatusCode, Json<Class>), (StatusCode, Json<ErrorResponse>)> {
-    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/class/{}", class_id)).send().await.map_err(internal_error)?;
+    let r = state.client.request(Method::GET, format!("{}/class/{}", state.data_source_url, class_id)).send().await.map_err(internal_error)?;
     if r.status() != StatusCode::OK { return Err((r.status(), Json(ErrorResponse { message: "failed to fetch class".to_string() }))); }
     Ok((StatusCode::OK, Json(r.json::<Class>().await.map_err(internal_error)?)))
 }
@@ -182,7 +182,7 @@ pub async fn get_instructor_assignments(
     State(state): State<AppState>,
     InstructorClaims { user_id }: InstructorClaims,
 ) -> Result<(StatusCode, Json<Vec<Assignment>>), (StatusCode, Json<ErrorResponse>)> {
-    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/instructor/assignment/{}", user_id)).send().await.map_err(internal_error)?;
+    let r = state.client.request(Method::GET, format!("{}/instructor/assignment/{}", state.data_source_url, user_id)).send().await.map_err(internal_error)?;
     if r.status() != StatusCode::OK {
         let status = r.status();
         let msg = r.json::<ErrorResponse>().await.map(|e| e.message).unwrap_or("failed to fetch assignments".into());
@@ -196,7 +196,7 @@ pub async fn get_enriched_assignments_handler(
     State(state): State<AppState>,
     InstructorClaims { user_id }: InstructorClaims,
 ) -> Result<(StatusCode, Json<Vec<EnrichedAssignment>>), (StatusCode, Json<ErrorResponse>)> {
-    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/instructor/assignment/enriched/{}", user_id)).send().await.map_err(internal_error)?;
+    let r = state.client.request(Method::GET, format!("{}/instructor/assignment/enriched/{}", state.data_source_url, user_id)).send().await.map_err(internal_error)?;
     if r.status() != StatusCode::OK {
         return Err((r.status(), Json(ErrorResponse { message: "failed to fetch enriched assignments".into() })));
     }
@@ -208,7 +208,7 @@ pub async fn get_schedule_handler(
     State(state): State<AppState>,
     ClaimsExtractor { user_id, .. }: ClaimsExtractor,
 ) -> Result<(StatusCode, Json<Vec<ScheduleItem>>), (StatusCode, Json<ErrorResponse>)> {
-    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/schedule/{}", user_id)).send().await.map_err(internal_error)?;
+    let r = state.client.request(Method::GET, format!("{}/schedule/{}", state.data_source_url, user_id)).send().await.map_err(internal_error)?;
     if r.status() != StatusCode::OK {
         return Err((r.status(), Json(ErrorResponse { message: "failed to fetch schedule".into() })));
     }
@@ -248,7 +248,7 @@ pub async fn get_sessions_by_instructor(
 }
 
 async fn enrich_permission(state: &AppState, p: Permission) -> Result<PermissionWithStudent, (StatusCode, Json<ErrorResponse>)> {
-    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?id={}", p.student_id)).send().await.map_err(internal_error)?;
+    let r = state.client.request(Method::GET, format!("{}/student/profile?id={}", state.data_source_url, p.student_id)).send().await.map_err(internal_error)?;
     let student_name = if r.status() == StatusCode::OK {
         let sp = r.json::<StudentProfile>().await.map_err(internal_error)?;
         format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default())
@@ -354,7 +354,7 @@ pub async fn get_student_count_handler(
 ) -> Result<(StatusCode, Json<usize>), (StatusCode, Json<ErrorResponse>)> {
     let course_id = params.get("course_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "course_id missing".into() })))?;
     let class_id = params.get("class_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "class_id missing".into() })))?;
-    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student?course_id={}&class_id={}", course_id, class_id)).send().await.map_err(internal_error)?;
+    let r = state.client.request(Method::GET, format!("{}/student?course_id={}&class_id={}", state.data_source_url, course_id, class_id)).send().await.map_err(internal_error)?;
     if r.status() != StatusCode::OK { return Ok((StatusCode::OK, Json(0))); }
     let students = r.json::<Vec<StudentProfile>>().await.map_err(internal_error)?;
     Ok((StatusCode::OK, Json(students.len())))
@@ -368,7 +368,7 @@ pub async fn get_students_by_course_class_handler(
     use diesel_async::RunQueryDsl;
     let course_id = params.get("course_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "course_id missing".into() })))?;
     let class_id = params.get("class_id").ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "class_id missing".into() })))?;
-    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student?course_id={}&class_id={}", course_id, class_id)).send().await.map_err(internal_error)?;
+    let r = state.client.request(Method::GET, format!("{}/student?course_id={}&class_id={}", state.data_source_url, course_id, class_id)).send().await.map_err(internal_error)?;
     if r.status() != StatusCode::OK { return Ok((StatusCode::OK, Json(Vec::new()))); }
     let mut students = r.json::<Vec<StudentProfile>>().await.map_err(internal_error)?;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
@@ -414,7 +414,7 @@ pub async fn get_instructor_dashboard_metrics_handler(
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
     let instructor_uuid = Uuid::parse_str(&user_id).map_err(internal_error)?;
-    let assignments_resp = state.client.get(format!("http://127.0.0.1:3000/instructor/assignment/{}", user_id)).send().await.map_err(internal_error)?;
+    let assignments_resp = state.client.get(format!("{}/instructor/assignment/{}", state.data_source_url, user_id)).send().await.map_err(internal_error)?;
     let assignments: Vec<Assignment> = if assignments_resp.status() == StatusCode::OK { assignments_resp.json().await.map_err(internal_error)? } else { Vec::new() };
     let all_sessions = sessions::table.filter(sessions::instructor_id.eq(instructor_uuid)).load::<Session>(&mut conn).await.map_err(internal_error)?;
     let completed: Vec<&Session> = all_sessions.iter().filter(|s| s.status == "finished").collect();
@@ -504,7 +504,7 @@ pub async fn get_department_analytics_handler(
 
     let mut course_stats: Vec<CourseAttendanceStat> = Vec::new();
     for (course_id, (p, t, s)) in &course_map {
-        let course_name = match state.client.request(Method::GET, format!("http://127.0.0.1:3000/course/{}", course_id)).send().await {
+        let course_name = match state.client.request(Method::GET, format!("{}/course/{}", state.data_source_url, course_id)).send().await {
             Ok(r) if r.status() == StatusCode::OK => r.json::<Course>().await.ok().map(|c| c.name),
             _ => None,
         };
@@ -532,7 +532,7 @@ pub async fn get_department_analytics_handler(
 
     let mut instructor_breakdown = Vec::new();
     for (iid, (p, t, s)) in &instructor_map {
-        let name = match state.client.request(Method::GET, format!("http://127.0.0.1:3000/user/{}", iid)).send().await {
+        let name = match state.client.request(Method::GET, format!("{}/user/{}", state.data_source_url, iid)).send().await {
             Ok(r) if r.status() == StatusCode::OK => r.json::<UserProfile>().await.ok().map(|u| format!("{} {}", u.first_name, u.last_name.unwrap_or_default())),
             _ => None,
         };
