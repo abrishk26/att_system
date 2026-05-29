@@ -15,6 +15,8 @@ import AdminReports from './pages/admin/Reports';
 import AdminStaffManagement from './pages/admin/StaffManagement';
 import AdminClassSchedule from './pages/admin/ClassSchedule';
 import AdminSettings from './pages/admin/Settings';
+import StudentAttendanceReport from './pages/admin/StudentAttendanceReport';
+import CourseAttendanceReport from './pages/admin/CourseAttendanceReport';
 
 // Instructor imports
 import InstructorLayout from './components/instructor/Layout';
@@ -35,7 +37,19 @@ import StudentCourseDetailPage from './pages/student/CourseDetailPage';
 import StudentPermissionsPage from './pages/student/PermissionsPage';
 import StudentNotificationsPage from './pages/student/NotificationsPage';
 
+import { useEffect } from 'react';
+
 export default function App() {
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme');
+    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (savedTheme === 'dark' || (!savedTheme && systemPrefersDark)) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, []);
+
   return (
     <BrowserRouter>
       <AuthProvider>
@@ -55,6 +69,8 @@ export default function App() {
               <Route path="reports" element={<AdminReports />} />
               <Route path="schedule" element={<AdminClassSchedule />} />
               <Route path="settings" element={<AdminSettings />} />
+              <Route path="reports/student-attendance" element={<StudentAttendanceReport />} />
+              <Route path="reports/course-attendance" element={<CourseAttendanceReport />} />
             </Route>
             <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
           </Route>

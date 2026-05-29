@@ -17,7 +17,7 @@ import {
     PointElement,
     LineElement,
     Title,
-    Tooltip,
+    Tooltip as ChartTooltip,
     Legend,
     ArcElement,
     Filler
@@ -39,7 +39,7 @@ ChartJS.register(
     PointElement,
     LineElement,
     Title,
-    Tooltip,
+    ChartTooltip,
     Legend,
     ArcElement,
     Filler
@@ -115,13 +115,13 @@ export default function InstructorDashboard() {
     if (isLoading) {
         return (
             <div className="p-8 space-y-8 animate-pulse max-w-[1600px] mx-auto">
-                <div className="h-20 bg-slate-100 rounded-2xl w-1/4"></div>
+                <div className="h-20 bg-muted rounded-2xl w-1/4"></div>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    {[1, 2, 3, 4].map(i => <div key={i} className="h-32 bg-slate-100 rounded-2xl"></div>)}
+                    {[1, 2, 3, 4].map(i => <div key={i} className="h-32 bg-muted rounded-2xl"></div>)}
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 h-96 bg-slate-100 rounded-3xl"></div>
-                    <div className="h-96 bg-slate-100 rounded-3xl"></div>
+                    <div className="lg:col-span-2 h-96 bg-muted rounded-3xl"></div>
+                    <div className="h-96 bg-muted rounded-3xl"></div>
                 </div>
             </div>
         );
@@ -185,23 +185,21 @@ export default function InstructorDashboard() {
         ],
     };
 
-
-
     return (
-        <div className="p-4 md:p-8 space-y-10 max-w-[1600px] mx-auto animate-fade-in-up">
+        <div className="p-4 md:p-8 space-y-8 max-w-[1600px] mx-auto animate-fade-in transition-colors duration-200">
             {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-slate-100 pb-8">
-                <div className="space-y-2">
-                    <h1 className="text-4xl font-black text-slate-900 tracking-tight flex items-center gap-3">
-                        <BarChart3 className="text-indigo-600" size={32} />
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-border pb-6">
+                <div className="space-y-1">
+                    <h1 className="text-3xl font-bold tracking-tight text-foreground flex items-center gap-3">
+                        <BarChart3 className="text-primary" size={28} />
                         Instructor Console
                     </h1>
-                    <p className="text-slate-500 font-medium">Gain deep insights into your students' attendance performance.</p>
+                    <p className="text-sm text-muted-foreground">Gain deep insights into your students' attendance performance.</p>
                 </div>
             </div>
 
             {/* Quick Metrics */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <MetricCard
                     title="Active Courses"
                     value={metrics?.stats.active_courses || 0}
@@ -233,25 +231,25 @@ export default function InstructorDashboard() {
             </div>
 
             {/* Data Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 {/* Status & Insights Column */}
-                <div className="lg:col-span-4 space-y-8 order-2 lg:order-1">
-                    <Card className="border-slate-50 shadow-lg">
+                <div className="lg:col-span-4 space-y-6 order-2 lg:order-1">
+                    <Card className="bg-card text-card-foreground border-border shadow-sm">
                         <CardHeader>
                             <div className="flex items-center gap-2">
-                                <TrendingUp className="text-indigo-600" size={18} />
-                                <CardTitle className="text-lg">Department Health</CardTitle>
+                                <TrendingUp className="text-primary" size={18} />
+                                <CardTitle className="text-lg font-bold">Department Health</CardTitle>
                             </div>
                         </CardHeader>
                         <CardContent className="flex flex-col items-center">
-                            <div className="h-64 w-64 relative mb-8">
+                            <div className="h-64 w-64 relative mb-6">
                                 <Doughnut data={doughnutData} options={{ plugins: { legend: { display: false } } }} />
                                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                    <span className="text-5xl font-black text-slate-900">{Math.round(metrics?.stats.avg_attendance || 0)}%</span>
-                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Consistency</span>
+                                    <span className="text-4xl font-extrabold text-foreground">{Math.round(metrics?.stats.avg_attendance || 0)}%</span>
+                                    <span className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em] mt-1">Consistency</span>
                                 </div>
                             </div>
-                            <div className="w-full space-y-3">
+                            <div className="w-full space-y-2">
                                 <StatusRow color="bg-emerald-500" label="Optimum Attendance" count={metrics?.course_performance.filter(c => c.attendance_rate >= 85).length || 0} />
                                 <StatusRow color="bg-indigo-500" label="Standard Performance" count={metrics?.course_performance.filter(c => c.attendance_rate < 85 && c.attendance_rate >= 70).length || 0} />
                                 <StatusRow color="bg-rose-500" label="Needs Intervention" count={metrics?.course_performance.filter(c => c.attendance_rate < 70).length || 0} />
@@ -259,34 +257,34 @@ export default function InstructorDashboard() {
                         </CardContent>
                     </Card>
 
-
                     {/* Quick Course Access */}
-                    <div className="space-y-6">
-                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 px-2">
-                            <BookOpen className="text-purple-600" size={24} />
+                    <div className="space-y-4">
+                        <h2 className="text-xl font-bold text-foreground flex items-center gap-3 px-2">
+                            <BookOpen className="text-primary" size={20} />
                             My Assignments
                         </h2>
-                        <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
+                        <div className="bg-card text-card-foreground rounded-xl border border-border overflow-hidden shadow-sm transition-colors">
+                          <div className="overflow-hidden rounded-xl border border-border bg-background">
                             <Table>
-                                <TableHeader className="bg-slate-50/50">
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableHead className="font-bold text-slate-500 pl-6">Course</TableHead>
-                                        <TableHead className="text-right font-bold text-slate-500 pr-6">Class</TableHead>
+                                <TableHeader className="bg-muted/50">
+                                    <TableRow className="hover:bg-transparent border-b border-border">
+                                        <TableHead className="font-bold text-muted-foreground text-xs pl-4">Course</TableHead>
+                                        <TableHead className="text-right font-bold text-muted-foreground text-xs pr-4">Class</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
                                     {assignments.map((assign) => (
-                                        <TableRow key={assign.id} className="hover:bg-slate-50/50 transition-colors cursor-pointer group" onClick={() => {/* handle navigation */}}>
-                                            <TableCell className="pl-6">
+                                        <TableRow key={assign.id} className="hover:bg-muted/50 border-b border-border transition-colors last:border-b-0 cursor-pointer group" onClick={() => {/* handle navigation */}}>
+                                            <TableCell className="pl-4 py-3">
                                                 <div className="flex flex-col">
-                                                    <span className="font-bold text-slate-900 text-sm group-hover:text-purple-600 transition-colors">
+                                                    <span className="font-bold text-foreground text-sm group-hover:text-primary transition-colors">
                                                         {assign.course_name || assign.course_id.toString().slice(0, 8)}
                                                     </span>
-                                                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Assignment</span>
+                                                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Assignment</span>
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="text-right pr-6">
-                                                <Badge variant="outline" className="border-slate-100 text-slate-500 font-bold text-[10px]">
+                                            <TableCell className="text-right pr-4 py-3">
+                                                <Badge variant="outline" className="border-border text-muted-foreground font-bold text-[10px]">
                                                     {assign.class_name || `Section ${assign.class_id.toString().slice(0, 8)}`}
                                                 </Badge>
                                             </TableCell>
@@ -294,42 +292,44 @@ export default function InstructorDashboard() {
                                     ))}
                                 </TableBody>
                             </Table>
+                          </div>
                         </div>
                     </div>
 
                     {/* Recent Attendances Table */}
-                    <div className="space-y-6">
-                        <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 px-2">
-                            <Activity className="text-emerald-600" size={24} />
+                    <div className="space-y-4">
+                        <h2 className="text-xl font-bold text-foreground flex items-center gap-3 px-2">
+                            <Activity className="text-primary" size={20} />
                             Recent Attendances
                         </h2>
-                        <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
+                        <div className="bg-card text-card-foreground rounded-xl border border-border overflow-hidden shadow-sm transition-colors">
+                          <div className="overflow-hidden rounded-xl border border-border bg-background">
                             <Table>
-                                <TableHeader className="bg-slate-50/50">
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableHead className="font-bold text-slate-500 pl-6">Session</TableHead>
-                                        <TableHead className="text-center font-bold text-slate-500">Rate</TableHead>
-                                        <TableHead className="text-right font-bold text-slate-500 pr-6">Status</TableHead>
+                                <TableHeader className="bg-muted/50">
+                                    <TableRow className="hover:bg-transparent border-b border-border">
+                                        <TableHead className="font-bold text-muted-foreground text-xs pl-4">Session</TableHead>
+                                        <TableHead className="text-center font-bold text-muted-foreground text-xs">Rate</TableHead>
+                                        <TableHead className="text-right font-bold text-muted-foreground text-xs pr-4">Status</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
                                     {metrics?.course_performance.slice(0, 5).map((cp, i) => (
-                                        <TableRow key={i} className="hover:bg-slate-50/50 transition-colors">
-                                            <TableCell className="pl-6">
+                                        <TableRow key={i} className="hover:bg-muted/50 border-b border-border transition-colors last:border-b-0">
+                                            <TableCell className="pl-4 py-3">
                                                 <div className="flex flex-col">
-                                                    <span className="font-bold text-slate-900 text-sm">
+                                                    <span className="font-bold text-foreground text-sm">
                                                         {cp.course_id.substring(0, 8)}
                                                     </span>
-                                                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Recorded</span>
+                                                    <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Recorded</span>
                                                 </div>
                                             </TableCell>
-                                            <TableCell className="text-center">
-                                                <span className={`font-black ${cp.attendance_rate < 75 ? 'text-rose-500' : 'text-emerald-600'}`}>
+                                            <TableCell className="text-center py-3">
+                                                <span className={`font-black ${cp.attendance_rate < 75 ? 'text-rose-500' : 'text-emerald-500'}`}>
                                                     {Math.round(cp.attendance_rate)}%
                                                 </span>
                                             </TableCell>
-                                            <TableCell className="text-right pr-6">
-                                                <Badge variant="outline" className={cp.attendance_rate < 75 ? 'border-rose-100 text-rose-500' : 'border-emerald-100 text-emerald-500'}>
+                                            <TableCell className="text-right pr-4 py-3">
+                                                <Badge variant="outline" className={cp.attendance_rate < 75 ? 'border-rose-200 text-rose-500' : 'border-emerald-200 text-emerald-500'}>
                                                     {cp.attendance_rate < 75 ? 'Intervene' : 'Good'}
                                                 </Badge>
                                             </TableCell>
@@ -337,25 +337,26 @@ export default function InstructorDashboard() {
                                     ))}
                                 </TableBody>
                             </Table>
+                          </div>
                         </div>
                     </div>
                 </div>
 
                 {/* Visual Analytics */}
-                <div className="lg:col-span-8 space-y-8 order-1 lg:order-2">
+                <div className="lg:col-span-8 space-y-6 order-1 lg:order-2">
                     <Tabs defaultValue="summary" className="w-full">
-                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-                            <h2 className="text-2xl font-black text-slate-900">Analytics Suite</h2>
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                            <h2 className="text-2xl font-bold tracking-tight text-foreground">Analytics Suite</h2>
                             
                             <div className="flex items-center gap-4">
-                                <TabsList className="bg-slate-100/80 p-1 hidden md:flex rounded-xl">
-                                    <TabsTrigger value="summary" className="rounded-lg">Summary</TabsTrigger>
-                                    <TabsTrigger value="students" className="rounded-lg">Students</TabsTrigger>
-                                    <TabsTrigger value="sessions" className="rounded-lg">Sessions</TabsTrigger>
-                                    <TabsTrigger value="comparative" className="rounded-lg">Comparative</TabsTrigger>
+                                <TabsList className="bg-muted p-1 hidden md:flex rounded-lg">
+                                    <TabsTrigger value="summary" className="rounded-md">Summary</TabsTrigger>
+                                    <TabsTrigger value="students" className="rounded-md">Students</TabsTrigger>
+                                    <TabsTrigger value="sessions" className="rounded-md">Sessions</TabsTrigger>
+                                    <TabsTrigger value="comparative" className="rounded-md">Comparative</TabsTrigger>
                                 </TabsList>
                             </div>
-                            <TabsList className="bg-slate-100/80 p-1 flex md:hidden w-full overflow-x-auto rounded-xl">
+                            <TabsList className="bg-muted p-1 flex md:hidden w-full overflow-x-auto rounded-lg">
                                 <TabsTrigger value="summary">Summary</TabsTrigger>
                                 <TabsTrigger value="students">Students</TabsTrigger>
                                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
@@ -364,11 +365,11 @@ export default function InstructorDashboard() {
                         </div>
 
                         {/* Summary Tab */}
-                        <TabsContent value="summary" className="space-y-6">
-                            <Card className="border-slate-50 shadow-md">
+                        <TabsContent value="summary" className="space-y-6 mt-0">
+                            <Card className="bg-card text-card-foreground border-border shadow-sm">
                                 <CardHeader>
-                                    <CardTitle>Attendance Distribution</CardTitle>
-                                    <CardDescription>Cross-course performance benchmarking using actual course names.</CardDescription>
+                                    <CardTitle className="text-base font-bold">Attendance Distribution</CardTitle>
+                                    <CardDescription className="text-xs text-muted-foreground">Cross-course performance benchmarking using actual course names.</CardDescription>
                                 </CardHeader>
                                 <CardContent>
                                     <div className="h-[300px] w-full">
@@ -380,15 +381,27 @@ export default function InstructorDashboard() {
                                                 plugins: { 
                                                     legend: { display: false },
                                                     tooltip: {
-                                                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                                                        backgroundColor: 'var(--card)',
+                                                        titleColor: 'var(--foreground)',
+                                                        bodyColor: 'var(--foreground)',
+                                                        borderColor: 'var(--border)',
+                                                        borderWidth: 1,
                                                         titleFont: { size: 14, family: 'Inter' },
                                                         padding: 12,
                                                         cornerRadius: 8,
                                                     }
                                                 },
                                                 scales: {
-                                                    y: { beginAtZero: true, max: 100, grid: { color: '#f8fafc' }, ticks: { font: { family: 'Inter', weight: 600 as const } } },
-                                                    x: { grid: { display: false }, ticks: { font: { family: 'Inter', weight: 600 as const } } }
+                                                    y: { 
+                                                        beginAtZero: true, 
+                                                        max: 100, 
+                                                        grid: { color: 'var(--border)' }, 
+                                                        ticks: { color: 'var(--foreground)', font: { family: 'Inter', weight: 600 as const } } 
+                                                    },
+                                                    x: { 
+                                                        grid: { display: false }, 
+                                                        ticks: { color: 'var(--foreground)', font: { family: 'Inter', weight: 600 as const } } 
+                                                    }
                                                 }
                                             }}
                                         />
@@ -396,10 +409,10 @@ export default function InstructorDashboard() {
                                 </CardContent>
                             </Card>
 
-                            <Card className="border-slate-50 shadow-md">
+                            <Card className="bg-card text-card-foreground border-border shadow-sm">
                                 <CardHeader>
-                                    <CardTitle>Temporal Analytics</CardTitle>
-                                    <CardDescription>Aggregate attendance movement over time.</CardDescription>
+                                    <CardTitle className="text-base font-bold">Temporal Analytics</CardTitle>
+                                    <CardDescription className="text-xs text-muted-foreground">Aggregate attendance movement over time.</CardDescription>
                                 </CardHeader>
                                 <CardContent>
                                     <div className="h-[300px] w-full">
@@ -411,13 +424,20 @@ export default function InstructorDashboard() {
                                                 plugins: { 
                                                     legend: { display: false },
                                                     tooltip: {
-                                                        backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                                                        backgroundColor: 'var(--card)',
+                                                        titleColor: 'var(--foreground)',
+                                                        bodyColor: 'var(--foreground)',
+                                                        borderColor: 'var(--border)',
+                                                        borderWidth: 1,
                                                         padding: 12,
                                                     }
                                                 },
                                                 scales: {
                                                     y: { display: false },
-                                                    x: { grid: { display: false }, ticks: { font: { family: 'Inter', weight: 600 as const } } }
+                                                    x: { 
+                                                        grid: { display: false }, 
+                                                        ticks: { color: 'var(--foreground)', font: { family: 'Inter', weight: 600 as const } } 
+                                                    }
                                                 }
                                             }}
                                         />
@@ -450,22 +470,22 @@ export default function InstructorDashboard() {
 
 function MetricCard({ title, value, sub, icon, color }: { title: string, value: string | number, sub: string, icon: React.ReactNode, color: string }) {
     const colors = {
-        indigo: 'bg-indigo-50 text-indigo-600',
-        emerald: 'bg-emerald-50 text-emerald-600',
-        amber: 'bg-amber-50 text-amber-600',
-        rose: 'bg-rose-50 text-rose-600',
+        indigo: 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400',
+        emerald: 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400',
+        amber: 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400',
+        rose: 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400',
     };
     return (
-        <Card className="border-slate-50 shadow-sm overflow-hidden group hover:border-indigo-100 transition-colors">
+        <Card className="bg-card text-card-foreground border-border shadow-sm overflow-hidden group hover:border-primary transition-colors">
             <CardContent className="p-6">
                 <div className="flex items-center gap-4">
-                    <div className={`w-12 h-12 rounded-2xl ${colors[color as keyof typeof colors]} flex items-center justify-center group-hover:scale-110 transition-transform`}>
+                    <div className={`w-12 h-12 rounded-xl ${colors[color as keyof typeof colors]} flex items-center justify-center group-hover:scale-105 transition-transform`}>
                         {icon}
                     </div>
                     <div>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{title}</p>
-                        <h3 className="text-2xl font-black text-slate-900">{value}</h3>
-                        <p className="text-xs text-slate-400 font-medium">{sub}</p>
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">{title}</p>
+                        <h3 className="text-2xl font-bold text-foreground mt-0.5">{value}</h3>
+                        <p className="text-xs text-muted-foreground font-medium">{sub}</p>
                     </div>
                 </div>
             </CardContent>
@@ -475,12 +495,12 @@ function MetricCard({ title, value, sub, icon, color }: { title: string, value: 
 
 function StatusRow({ color, label, count }: { color: string, label: string, count: number }) {
     return (
-        <div className="flex items-center justify-between p-3 rounded-xl hover:bg-slate-50 transition-colors cursor-default">
+        <div className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors cursor-default">
             <div className="flex items-center gap-3">
                 <div className={`w-2.5 h-2.5 rounded-full ${color} shadow-sm shadow-black/10`}></div>
-                <span className="text-xs font-bold text-slate-600">{label}</span>
+                <span className="text-xs font-bold text-muted-foreground">{label}</span>
             </div>
-            <span className="text-xs font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md">{count}</span>
+            <span className="text-xs font-bold text-foreground bg-muted px-2 py-0.5 rounded">{count}</span>
         </div>
     );
 }

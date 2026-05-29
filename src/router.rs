@@ -3,6 +3,9 @@ use crate::handlers::{
     static_handler, login_handler, verify_handler, refresh_handler, logout_handler, nfc_login_handler,
     students::*,
     instructors::*,
+    analytics::{
+        university_intelligence_handler, student_analytics_handler, report_build_handler,
+    },
     notifications::{
         get_notifications_handler,
         mark_notification_read_handler,
@@ -76,6 +79,9 @@ pub fn new(app_state: AppState) -> Router {
 
         // ── Admin / Department Head ───────────────────────────────────────────
         .route("/admin/analytics", get(get_department_analytics_handler))
+        .route("/admin/analytics/university", get(university_intelligence_handler))
+        .route("/admin/analytics/student/{student_id}", get(student_analytics_handler))
+        .route("/admin/reports/build", axum::routing::post(report_build_handler))
         .fallback(|| async { (axum::http::StatusCode::NOT_FOUND, axum::Json(crate::types::ErrorResponse { message: "API endpoint not found".to_string() })) });
 
     Router::new()

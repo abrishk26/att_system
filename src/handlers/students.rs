@@ -58,7 +58,7 @@ pub async fn get_student_courses(
     State(state): State<AppState>,
     StudentClaims { user_id }: StudentClaims,
 ) -> Result<(StatusCode, Json<Vec<Course>>), (StatusCode, Json<ErrorResponse>)> {
-    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/courses/{}", user_id)).send().await.map_err(internal_error)?;
+    let r = state.client.request(Method::GET, format!("{}/student/courses/{}", state.data_source_url, user_id)).send().await.map_err(internal_error)?;
     if r.status() != StatusCode::OK { return Err((r.status(), Json(ErrorResponse { message: "failed to fetch student courses".into() }))); }
     Ok((StatusCode::OK, Json(r.json::<Vec<Course>>().await.map_err(internal_error)?)))
 }
@@ -73,7 +73,7 @@ pub async fn get_records_with_student_info(
     let records = attendance_record::table.filter(attendance_record::session_id.eq(session_id)).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
     let mut enriched = Vec::new();
     for record in records {
-        let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?id={}", record.student_id)).send().await.map_err(internal_error)?;
+        let r = state.client.request(Method::GET, format!("{}/student/profile?id={}", state.data_source_url, record.student_id)).send().await.map_err(internal_error)?;
         if r.status() == StatusCode::OK {
             if let Ok(sp) = r.json::<StudentProfile>().await {
                 enriched.push(AttendanceRecordWithStudent {
@@ -97,7 +97,7 @@ pub async fn mark_attendance_handler(
     let mut conn = state.pool.get().await.map_err(internal_error)?;
 
     // Look up student by NFC ID
-    let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", payload.nfc_id)).send().await.map_err(internal_error)?;
+    let r = state.client.request(Method::GET, format!("{}/student/profile?nfc_id={}", state.data_source_url, payload.nfc_id)).send().await.map_err(internal_error)?;
     if r.status() != StatusCode::OK {
         // Log failed tap (unknown NFC card)
         log_tap(&mut conn, &payload.nfc_id, payload.session_id, None, false, Some("NFC card not recognised".into())).await;
@@ -170,7 +170,7 @@ pub async fn batch_update_attendance_handler(
             });
             continue;
         }
-        let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", item.nfc_id)).send().await.map_err(internal_error)?;
+        let r = state.client.request(Method::GET, format!("{}/student/profile?nfc_id={}", state.data_source_url, item.nfc_id)).send().await.map_err(internal_error)?;
         if r.status() != StatusCode::OK {
             log_tap(&mut conn, &item.nfc_id, payload.session_id, None, false, Some("student not found".into())).await;
             early_results.push(BatchUpdateResult {
@@ -335,7 +335,7 @@ pub async fn offline_sync_handler(
             details.push(OfflineSyncDetail { client_id: rec.client_id, result: "failed".into(), reason: Some(format!("invalid status '{}'", rec.status)) });
             continue;
         }
-        let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?nfc_id={}", rec.nfc_id)).send().await.map_err(internal_error)?;
+        let r = state.client.request(Method::GET, format!("{}/student/profile?nfc_id={}", state.data_source_url, rec.nfc_id)).send().await.map_err(internal_error)?;
         if r.status() != StatusCode::OK {
             failed += 1;
             details.push(OfflineSyncDetail { client_id: rec.client_id, result: "failed".into(), reason: Some("student not found".into()) });
@@ -459,7 +459,7 @@ pub async fn get_student_dashboard_metrics_handler(
 
     let mut courses_performance = Vec::new();
     for (course_id, (pres, tot)) in &course_stats {
-        let course_name = match state.client.request(Method::GET, format!("http://127.0.0.1:3000/course/{}", course_id)).send().await {
+        let course_name = match state.client.request(Method::GET, format!("{}/course/{}", state.data_source_url, course_id)).send().await {
             Ok(r) if r.status() == StatusCode::OK => r.json::<Course>().await.map(|c| c.name).unwrap_or_else(|_| course_id.to_string()),
             _ => course_id.to_string(),
         };
@@ -502,7 +502,7 @@ pub async fn get_tap_log_handler(
     let mut responses = Vec::new();
     for log_entry in logs {
         let student_name = if let Some(sid) = log_entry.student_id {
-            let r = state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?id={}", sid)).send().await.ok();
+            let r = state.client.request(Method::GET, format!("{}/student/profile?id={}", state.data_source_url, sid)).send().await.ok();
             r.and_then(|resp| {
                 if resp.status() == StatusCode::OK {
                     // We need to block on json parsing — use a simpler approach
@@ -513,7 +513,7 @@ pub async fn get_tap_log_handler(
 
         // Simpler approach: try to get student name for enrichment
         let name = if let Some(sid) = log_entry.student_id {
-            match state.client.request(Method::GET, format!("http://127.0.0.1:3000/student/profile?id={}", sid)).send().await {
+            match state.client.request(Method::GET, format!("{}/student/profile?id={}", state.data_source_url, sid)).send().await {
                 Ok(resp) if resp.status() == StatusCode::OK => {
                     resp.json::<StudentProfile>().await.ok().map(|sp| format!("{} {}", sp.first_name, sp.last_name.unwrap_or_default()))
                 }
