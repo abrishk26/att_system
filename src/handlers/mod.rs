@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 use jwt_simple::prelude::*;
-use crate::models::{LogoutRequest, NfcLoginRequest, TokenDenylist};
+use crate::models::{LogoutRequest, NfcLoginRequest, TokenDenylist, StudentProfile};
 use crate::schema::token_denylist;
 
 pub mod analytics;
@@ -191,10 +191,7 @@ pub async fn nfc_login_handler(
         ));
     }
 
-    #[derive(serde::Deserialize)]
-    struct UserProfileMinimal { id: uuid::Uuid, role: String }
-
-    let profile = response.json::<UserProfileMinimal>().await.map_err(|e| {
+    let profile = response.json::<StudentProfile>().await.map_err(|e| {
         log::error!("NFC login parse error: {}", e);
         (
             StatusCode::INTERNAL_SERVER_ERROR,

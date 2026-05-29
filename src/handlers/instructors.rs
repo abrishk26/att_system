@@ -2,7 +2,7 @@ use crate::types::*;
 use axum::{extract::{State, Path, Query}, Json, http::{StatusCode, Method}};
 use crate::models::*;
 use crate::schema::{sessions, attendance_record, permissions};
-use crate::helpers::internal_error;
+use crate::helpers::{course_context, fire_notification, internal_error};
 use uuid::Uuid;
 use diesel::{ExpressionMethods, QueryDsl};
 use serde::Serialize;
@@ -60,18 +60,26 @@ pub async fn update_session_handler(
             .await
             .unwrap_or_default();
 
-        for rec in &absent_records {
-            let notif = crate::models::NewNotification {
-                user_id: rec.student_id,
-                title: "Absence Recorded".into(),
-                message: "You were marked absent for a session. Submit a permission request if you have a valid reason.".into(),
-                notification_type: "absence_recorded".into(),
-                action_url: Some("/student/permissions".into()),
-            };
-            let _ = diesel::insert_into(crate::schema::notifications::table)
-                .values(&notif)
-                .execute(&mut conn)
-                .await;
+        if !absent_records.is_empty() {
+            let pool = state.pool.clone();
+            let client = state.client.clone();
+            let course_id = session.course_id;
+            let class_id = session.class_id;
+            let student_ids: Vec<uuid::Uuid> = absent_records.iter().map(|r| r.student_id).collect();
+            tokio::spawn(async move {
+                let ctx = course_context(&client, course_id, class_id).await;
+                let msg = format!(
+                    "{}\n\nYou were marked absent for this session. Submit a permission request if you have a valid reason.",
+                    ctx
+                );
+                for student_id in student_ids {
+                    fire_notification(
+                        &pool, student_id,
+                        "Absence Recorded", &msg,
+                        "absence_recorded", Some("/student/permissions".into()),
+                    ).await;
+                }
+            });
         }
     }
 
@@ -107,19 +115,26 @@ pub async fn create_record_handler(
     }).collect();
     diesel::insert_into(attendance_record::table).values(&new_records).execute(&mut conn).await.map_err(internal_error)?;
 
-    // Notify students when session opens
-    for s in &new_records {
-        let notif = crate::models::NewNotification {
-            user_id: s.student_id,
-            title: "Session Started".into(),
-            message: "Your attendance session is now open. Tap your NFC card to check in.".into(),
-            notification_type: "session_open".into(),
-            action_url: None,
-        };
-        let _ = diesel::insert_into(crate::schema::notifications::table)
-            .values(&notif)
-            .execute(&mut conn)
-            .await;
+    {
+        let pool = state.pool.clone();
+        let client = state.client.clone();
+        let course_id = session.course_id;
+        let class_id = session.class_id;
+        let student_ids: Vec<uuid::Uuid> = new_records.iter().map(|r| r.student_id).collect();
+        tokio::spawn(async move {
+            let ctx = course_context(&client, course_id, class_id).await;
+            let msg = format!(
+                "{}\n\nYour attendance session is now open. Please present your NFC card to mark your attendance.",
+                ctx
+            );
+            for student_id in student_ids {
+                fire_notification(
+                    &pool, student_id,
+                    "Session Started", &msg,
+                    "session_started", None,
+                ).await;
+            }
+        });
     }
 
     Ok((StatusCode::CREATED, Json(new_records)))
@@ -299,20 +314,34 @@ pub async fn update_permission_handler(
             .execute(&mut conn).await;
     }
 
-    // Insert Notification for Student
-    if status != "pending" {
-        let status_text = if status == "accepted" { "approved" } else { "rejected" };
-        let notif = crate::models::NewNotification {
-            user_id: updated.student_id,
-            title: format!("Permission {}", status_text.to_uppercase()),
-            message: format!("Your permission request was {}.", status_text),
-            notification_type: "permission_update".into(),
-            action_url: Some("/student/permissions".into()),
-        };
-        let _ = diesel::insert_into(crate::schema::notifications::table)
-            .values(&notif)
-            .execute(&mut conn)
-            .await;
+    if status == "accepted" || status == "rejected" {
+        if let Ok(sess) = sessions::table.find(updated.session_id).get_result::<Session>(&mut conn).await {
+            let pool = state.pool.clone();
+            let client = state.client.clone();
+            let student_id = updated.student_id;
+            let accepted = status == "accepted";
+            tokio::spawn(async move {
+                let ctx = course_context(&client, sess.course_id, sess.class_id).await;
+                let (title, msg) = if accepted {
+                    (
+                        "Permission Accepted",
+                        format!(
+                            "{}\n\nYour permission request has been accepted and your attendance has been updated to excused.",
+                            ctx
+                        ),
+                    )
+                } else {
+                    (
+                        "Permission Rejected",
+                        format!(
+                            "{}\n\nYour permission request has been reviewed and was not approved.",
+                            ctx
+                        ),
+                    )
+                };
+                fire_notification(&pool, student_id, title, msg, "permission_update", None).await;
+            });
+        }
     }
 
     Ok((StatusCode::OK, Json(updated)))
