@@ -689,10 +689,10 @@ export default function AttendancePage() {
                                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Attachment</p>
                                         <div className="rounded-2xl border border-slate-100 overflow-hidden group">
                                             <img
-                                                src={`${(import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:3001'}/${viewingPermission.img_url}`}
+                                                src={`${(import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''}/${viewingPermission.img_url}`}
                                                 alt="Permission evidence"
                                                 className="w-full object-cover max-h-64 hover:scale-105 transition-transform duration-500 cursor-zoom-in"
-                                                onClick={() => window.open(`${(import.meta.env.VITE_API_BASE_URL as string | undefined) ?? 'http://localhost:3001'}/${viewingPermission.img_url}`, '_blank')}
+                                                onClick={() => window.open(`${(import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''}/${viewingPermission.img_url}`, '_blank')}
                                             />
                                         </div>
                                     </div>
