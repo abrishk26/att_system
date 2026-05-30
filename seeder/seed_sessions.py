@@ -3,147 +3,134 @@ import uuid
 import random
 import psycopg2
 from faker import Faker
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
+from dotenv import dotenv_values
+from datetime import datetime, timedelta
 
 fake = Faker()
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/as")
+def get_db_urls():
+    att_env = dotenv_values(os.path.join(os.path.dirname(__file__), "../.env"))
+    ds_env = dotenv_values(os.path.join(os.path.dirname(__file__), "../../data_source/.env"))
+    
+    return att_env.get("DATABASE_URL"), ds_env.get("DATABASE_URL")
 
-def get_connection():
-    try:
-        return psycopg2.connect(DATABASE_URL)
-    except Exception as e:
-        print(f"Error connecting to database: {e}")
-        return None
-
-def seed_all():
-    conn = get_connection()
-    if not conn:
+def seed_att_system():
+    att_url, ds_url = get_db_urls()
+    
+    if not att_url or not ds_url:
+        print("Could not find database URLs.")
         return
 
-    cur = conn.cursor()
+    print("Connecting to databases...")
+    try:
+        att_conn = psycopg2.connect(att_url)
+        ds_conn = psycopg2.connect(ds_url)
+    except Exception as e:
+        print(f"Error connecting to databases: {e}")
+        return
+
+    att_cur = att_conn.cursor()
+    ds_cur = ds_conn.cursor()
 
     try:
-        print("--- Starting Comprehensive Database Seeding ---")
+        print("--- Starting att_system Database Seeding ---")
 
-        # 1. Clear existing data
-        print("Clearing existing data...")
+        print("Clearing existing att_system data...")
         tables = [
             "attendance_record", "sessions", "permissions", 
-            "assignments", "enrollments", "students", 
-            "instructors", "courses", "classes", "profiles"
+            "notifications", "tap_log", "token_denylist"
         ]
-        cur.execute(f"TRUNCATE {', '.join(tables)} CASCADE")
+        att_cur.execute(f"TRUNCATE {', '.join(tables)} CASCADE")
 
-        # 2. Seed Classes
-        print("Seeding classes...")
-        class_ids = []
-        for year in range(1, 5):
-            for section in range(1, 3):
-                cid = str(uuid.uuid4())
-                cur.execute("INSERT INTO classes (id, year, section) VALUES (%s, %s, %s)", (cid, year, section))
-                class_ids.append(cid)
-
-        # 3. Seed Profiles (Admin, Instructors, Students)
-        print("Seeding profiles...")
+        print("Fetching related data from data_source...")
+        # Get assignments to create sessions
+        ds_cur.execute("SELECT instructor_id, class_id, course_id FROM assignments")
+        assignments = ds_cur.fetchall()
         
-        # Admin
-        cur.execute(
-            "INSERT INTO profiles (id, first_name, last_name, username, password_hash, role) VALUES (%s, %s, %s, %s, %s, %s)",
-            (str(uuid.uuid4()), "System", "Admin", "admin", "admin123", "admin")
-        )
+        # Get enrollments to know who is in what course
+        ds_cur.execute("SELECT student_id, course_id FROM enrollments")
+        enrollments = ds_cur.fetchall()
+        
+        # Get students to know their class_id and nfc_id
+        ds_cur.execute("SELECT id, class_id, nfc_id FROM students")
+        students = ds_cur.fetchall()
 
-        # Instructors
-        instructor_ids = []
-        predefined_instructors = [("Mekaeel", "Mekaeel", "dr.mekaeel")]
-        for first, last, uname in predefined_instructors:
-            iid = str(uuid.uuid4())
-            cur.execute("INSERT INTO profiles (id, first_name, last_name, username, password_hash, role) VALUES (%s, %s, %s, %s, %s, %s)", (iid, first, last, uname, "admin123", "instructor"))
-            cur.execute("INSERT INTO instructors (id) VALUES (%s)", (iid,))
-            instructor_ids.append(iid)
+        if not assignments or not enrollments or not students:
+            print("Error: data_source database lacks necessary data. Please run seed_data.py on data_source first.")
+            return
 
-        for _ in range(4):
-            iid = str(uuid.uuid4())
-            cur.execute("INSERT INTO profiles (id, first_name, last_name, username, password_hash, role) VALUES (%s, %s, %s, %s, %s, %s)", (iid, fake.first_name(), fake.last_name(), f"prof.{fake.first_name().lower()}", "admin123", "instructor"))
-            cur.execute("INSERT INTO instructors (id) VALUES (%s)", (iid,))
-            instructor_ids.append(iid)
+        # Map student class and course enrollment
+        student_course_map = {} # (student_id, course_id)
+        for student_id, course_id in enrollments:
+            student_course_map[(student_id, course_id)] = True
 
-        # Students
-        student_data = [] # (id, class_id)
-        predefined_students = [("Alice", "Johnson", "alice.j"), ("Bob", "Smith", "bob.s"), ("Charlie", "Brown", "charlie.b"), ("Diana", "Prince", "diana.p")]
-        for first, last, uname in predefined_students:
-            sid = str(uuid.uuid4())
-            cid = random.choice(class_ids)
-            cur.execute("INSERT INTO profiles (id, first_name, last_name, username, password_hash, role) VALUES (%s, %s, %s, %s, %s, %s)", (sid, first, last, uname, "password123", "student"))
-            cur.execute("INSERT INTO students (id, class_id, nfc_id) VALUES (%s, %s, %s)", (sid, cid, str(uuid.uuid4())[:8].upper()))
-            student_data.append((sid, cid))
-
-        for _ in range(46):
-            sid = str(uuid.uuid4())
-            cid = random.choice(class_ids)
-            cur.execute("INSERT INTO profiles (id, first_name, last_name, username, password_hash, role) VALUES (%s, %s, %s, %s, %s, %s)", (sid, fake.first_name(), fake.last_name(), f"{fake.first_name().lower()}.{random.randint(100, 999)}", "password123", "student"))
-            cur.execute("INSERT INTO students (id, class_id, nfc_id) VALUES (%s, %s, %s)", (sid, cid, str(uuid.uuid4())[:8].upper()))
-            student_data.append((sid, cid))
-
-        # 4. Seed Courses
-        print("Seeding courses...")
-        course_list = [("CS101", "Programming"), ("CS201", "DBMS"), ("CS301", "AI"), ("CS401", "OS"), ("MATH101", "Calculus")]
-        course_ids = []
-        for code, name in course_list:
-            cuid = str(uuid.uuid4())
-            cur.execute("INSERT INTO courses (id, course_id, name) VALUES (%s, %s, %s)", (cuid, code, name))
-            course_ids.append(cuid)
-
-        # 5. Seed Enrollments & Assignments
-        print("Seeding enrollments and assignments...")
-        for sid, _ in student_data:
-            for cuid in random.sample(course_ids, random.randint(3, 5)):
-                cur.execute("INSERT INTO enrollments (id, student_id, course_id) VALUES (%s, %s, %s)", (str(uuid.uuid4()), sid, cuid))
-
-        assignments = [] # (inst_id, class_id, course_id)
-        for iid in instructor_ids:
-            for _ in range(random.randint(2, 4)):
-                cid, cuid = random.choice(class_ids), random.choice(course_ids)
-                aid = str(uuid.uuid4())
-                cur.execute("INSERT INTO assignments (id, instructor_id, class_id, course_id) VALUES (%s, %s, %s, %s)", (aid, iid, cid, cuid))
-                assignments.append((iid, cid, cuid))
-
-        # 6. Seed Sessions & Attendance Records
+        student_class_map = {row[0]: row[1] for row in students}
+        student_nfc_map = {row[0]: row[2] for row in students}
+        
         print("Seeding sessions and attendance...")
         for inst_id, class_id, course_id in assignments:
             # Find students in this class enrolled in this course
-            cur.execute("""
-                SELECT s.id FROM students s
-                JOIN enrollments e ON s.id = e.student_id
-                WHERE s.class_id = %s AND e.course_id = %s
-            """, (class_id, course_id))
-            students_in_session = [row[0] for row in cur.fetchall()]
+            students_in_session = [
+                s_id for s_id in student_class_map
+                if student_class_map[s_id] == class_id and (s_id, course_id) in student_course_map
+            ]
 
-            if not students_in_session: continue
+            if not students_in_session: 
+                continue
 
             for i in range(random.randint(5, 10)):
                 session_id = str(uuid.uuid4())
-                status = 'completed' if i < 4 or random.random() > 0.3 else random.choice(['ongoing', 'incoming'])
-                cur.execute("INSERT INTO sessions (id, instructor_id, class_id, course_id, status) VALUES (%s, %s, %s, %s, %s)", (session_id, inst_id, class_id, course_id, status))
+                status = 'finished' if i < 4 or random.random() > 0.3 else random.choice(['active', 'incoming'])
+                created_at = datetime.now() - timedelta(days=random.randint(1, 30))
+                
+                att_cur.execute(
+                    "INSERT INTO sessions (id, instructor_id, class_id, course_id, status, created_at) VALUES (%s, %s, %s, %s, %s, %s)", 
+                    (session_id, inst_id, class_id, course_id, status, created_at)
+                )
 
-                if status == 'completed':
+                if status == 'finished':
                     for sid in students_in_session:
                         rand = random.random()
                         att_status = 'present' if rand < 0.8 else 'late' if rand < 0.9 else 'absent'
-                        cur.execute("INSERT INTO attendance_record (id, student_id, session_id, status) VALUES (%s, %s, %s, %s)", (str(uuid.uuid4()), sid, session_id, att_status))
+                        att_cur.execute(
+                            "INSERT INTO attendance_record (id, student_id, session_id, status) VALUES (%s, %s, %s, %s)", 
+                            (str(uuid.uuid4()), sid, session_id, att_status)
+                        )
+                        
+                        # Generate some tap logs for present/late students
+                        if att_status in ['present', 'late'] and random.random() > 0.1:
+                            tapped_at = created_at + timedelta(minutes=random.randint(-5, 15))
+                            att_cur.execute(
+                                "INSERT INTO tap_log (id, nfc_id, session_id, student_id, success, tapped_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                                (str(uuid.uuid4()), student_nfc_map[sid], session_id, sid, True, tapped_at)
+                            )
+                
+                elif status == 'active':
+                    # Only some students have tapped so far
+                    for sid in students_in_session:
+                        if random.random() > 0.5:
+                            att_status = 'present'
+                            att_cur.execute(
+                                "INSERT INTO attendance_record (id, student_id, session_id, status) VALUES (%s, %s, %s, %s)", 
+                                (str(uuid.uuid4()), sid, session_id, att_status)
+                            )
+                            tapped_at = created_at + timedelta(minutes=random.randint(0, 10))
+                            att_cur.execute(
+                                "INSERT INTO tap_log (id, nfc_id, session_id, student_id, success, tapped_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                                (str(uuid.uuid4()), student_nfc_map[sid], session_id, sid, True, tapped_at)
+                            )
 
-        print("--- Seeding Complete Successfully ---")
-        conn.commit()
+        print("--- att_system Seeding Complete Successfully ---")
+        att_conn.commit()
 
     except Exception as e:
         print(f"Error during seeding: {e}")
-        conn.rollback()
+        att_conn.rollback()
     finally:
-        cur.close()
-        conn.close()
+        att_cur.close()
+        att_conn.close()
+        ds_cur.close()
+        ds_conn.close()
 
 if __name__ == "__main__":
-    seed_all()
+    seed_att_system()
