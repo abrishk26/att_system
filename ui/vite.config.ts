@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
   const apiBase = env.VITE_API_BASE_URL || 'http://localhost:3001'
 
   return {
+    base: '',
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
