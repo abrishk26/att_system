@@ -1,5 +1,6 @@
 /target
 .env
-/ui*
-!/ui/dist
+/ui/*
+!/ui/dist/
+!/ui/dist/**
 /uploads
