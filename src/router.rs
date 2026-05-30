@@ -1,4 +1,6 @@
 use axum::{Router, routing::{get, post, patch}};
+use tower_http::trace::{TraceLayer, DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse};
+use tracing::Level;
 use crate::handlers::{
     static_handler, login_handler, verify_handler, refresh_handler, logout_handler, nfc_login_handler, health_check_handler,
     students::*,
@@ -90,5 +92,11 @@ pub fn new(app_state: AppState) -> Router {
     Router::new()
         .nest("/api", api_routes)
         .fallback(static_handler)
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
         .with_state(app_state)
 }

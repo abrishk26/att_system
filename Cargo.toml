@@ -19,5 +19,8 @@ env_logger = "0.11.9"
 jwt-simple = { version = "0.12.14", default-features = false, features = ["pure-rust"] }
 rust-embed ="8.11.0"
 mime_guess = "2.0.5"
-tower-http = { version = "0.6.2", features = ["cors"] }
+tower-http = { version = "0.6.2", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-log = "0.2"
 tokio-stream = "0.1"

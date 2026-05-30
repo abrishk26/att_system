@@ -8,17 +8,31 @@ mod types;
 
 use diesel_async::pooled_connection::{AsyncDieselConnectionManager, bb8};
 use dotenvy::dotenv_override;
-use env_logger::Env;
 use reqwest::ClientBuilder;
+use tracing::info;
+use tracing_subscriber::{EnvFilter, fmt};
 use types::*;
 
 #[tokio::main]
 async fn main() {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    // Initialise tracing — respects RUST_LOG env var, defaults to "info"
+    // The fmt layer prints: timestamp, level, target, span fields, message
+    fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_target(true)
+        .with_thread_ids(false)
+        .init();
+
+    // Bridge legacy log:: macros used in handlers into tracing
+    tracing_log::LogTracer::init().ok();
+
     dotenv_override().ok();
 
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    log::info!("Database Url: {}", db_url);
+    info!(db_url = %db_url, "Database URL loaded");
 
     let jwt_secret = std::env::var("JWT_SECRET")
         .expect("JWT_SECRET must be set in .env")
@@ -26,7 +40,7 @@ async fn main() {
 
     let data_source_url = std::env::var("DATA_SOURCE_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
-    log::info!("Data source URL: {}", data_source_url);
+    info!(data_source_url = %data_source_url, "Data source URL loaded");
 
     let server_port = std::env::var("SERVER_PORT")
         .unwrap_or_else(|_| "0".to_string());
@@ -49,6 +63,6 @@ async fn main() {
         .expect("unable to bind listening address");
 
     let addr = listener.local_addr().unwrap();
-    println!("Listening on {}", addr);
+    info!(address = %addr, "Server listening");
     axum::serve(listener, router::new(app_state)).await.unwrap();
 }

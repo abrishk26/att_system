@@ -68,6 +68,7 @@ pub async fn login_handler(
             Json(ErrorResponse { message: "invalid username or password".to_string() }),
         ))
     } else {
+        log::error!("Data source login failed: status={}", response.status());
         Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { message: "internal server error".to_string() }),
