@@ -135,7 +135,7 @@ export default function LandingPage() {
             </div>
             <div>
               <span className="font-extrabold text-lg tracking-tight text-slate-900 dark:text-white block leading-none">
-                Smart Campus
+                Digital
               </span>
               <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest">
                 Attendance System
@@ -374,7 +374,7 @@ export default function LandingPage() {
             </div>
             <div>
               <span className="font-extrabold text-base tracking-tight text-slate-900 dark:text-white block leading-none">
-                Smart Campus
+                Digital
               </span>
               <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
                 Attendance System
@@ -382,7 +382,7 @@ export default function LandingPage() {
             </div>
           </div>
           <p className="text-slate-400 dark:text-slate-500 text-sm text-center">
-            © 2026 Smart Campus Management System. Built for academic excellence.
+            © 2026 Digital Attendance System. Built for academic excellence.
           </p>
           <div className="flex gap-6 text-sm font-medium text-slate-400 dark:text-slate-500">
             <a href="#" className="hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors">Privacy Policy</a>
