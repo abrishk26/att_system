@@ -343,6 +343,7 @@ pub struct StudentProfile {
     pub last_name: Option<String>,
     pub username: String,
     pub img_url: Option<String>,
+    pub role: String,
     pub attendance_percentage: Option<f64>,
 }
 
