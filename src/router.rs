@@ -1,6 +1,6 @@
 use axum::{Router, routing::{get, post, patch}};
 use crate::handlers::{
-    static_handler, login_handler, verify_handler, refresh_handler, logout_handler, nfc_login_handler,
+    static_handler, login_handler, verify_handler, refresh_handler, logout_handler, nfc_login_handler, health_check_handler,
     students::*,
     instructors::*,
     analytics::{
@@ -17,6 +17,9 @@ use crate::types::AppState;
 
 pub fn new(app_state: AppState) -> Router {
     let api_routes = Router::new()
+        // ── Health ────────────────────────────────────────────────────────────
+        .route("/health", get(health_check_handler))
+
         // ── Auth ──────────────────────────────────────────────────────────────
         .route("/login", post(login_handler))
         .route("/auth/verify", get(verify_handler))

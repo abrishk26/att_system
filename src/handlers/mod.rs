@@ -15,6 +15,22 @@ pub mod notifications;
 
 
 
+#[derive(serde::Serialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub message: String,
+}
+
+pub async fn health_check_handler() -> (StatusCode, Json<HealthResponse>) {
+    (
+        StatusCode::OK,
+        Json(HealthResponse {
+            status: "healthy".to_string(),
+            message: "att_system is running".to_string(),
+        })
+    )
+}
+
 pub async fn login_handler(
     State(state): State<AppState>,
     Json(payload): Json<LoginData>,
