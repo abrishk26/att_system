@@ -1,13 +1,11 @@
 mod analytics;
+mod db;
 mod handlers;
 mod helpers;
 mod models;
 mod router;
 mod schema;
 mod types;
-
-use diesel_async::pooled_connection::{AsyncDieselConnectionManager, bb8};
-use dotenvy::dotenv_override;
 use reqwest::ClientBuilder;
 use tracing::info;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -29,10 +27,11 @@ async fn main() {
     // Bridge legacy log:: macros used in handlers into tracing
     tracing_log::LogTracer::init().ok();
 
-    dotenv_override().ok();
+    // Load .env for local dev; do not override env vars set by the host (Render, etc.).
+    dotenvy::dotenv().ok();
 
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    info!(db_url = %db_url, "Database URL loaded");
+    info!("Database URL loaded");
 
     let jwt_secret = std::env::var("JWT_SECRET")
         .expect("JWT_SECRET must be set in .env")
@@ -45,9 +44,9 @@ async fn main() {
     let server_port = std::env::var("SERVER_PORT")
         .unwrap_or_else(|_| "0".to_string());
 
-    // Set up connection pool
-    let config = AsyncDieselConnectionManager::<diesel_async::AsyncPgConnection>::new(db_url);
-    let pool = bb8::Pool::builder().build(config).await.unwrap();
+    let pool = db::create_pool(db_url)
+        .await
+        .expect("Failed to create database pool — check DATABASE_URL and network access");
 
     let client = ClientBuilder::new()
         .timeout(std::time::Duration::from_secs(10))
