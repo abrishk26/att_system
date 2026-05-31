@@ -290,6 +290,35 @@ export interface UniversityIntelligence {
   session_heatmap: Array<{ dow: number; hour: number; value: number; sessions: number }>;
   tap_audit: { total_taps: number; success_rate: number; duplicate_taps: number; unknown_card_taps: number };
   cohort_by_class_year: Array<{ label: string; attendance_rate: number; count: number }>;
+  batch_sections: Array<{
+    class_year: number;
+    section: number;
+    sessions_finished: number;
+    records: number;
+    course_count: number;
+    attendance_rate: number;
+    punctuality_index: number;
+  }>;
+  batch_section_courses: Array<{
+    class_year: number;
+    section: number;
+    course_id: string;
+    course_code?: string;
+    course_name?: string;
+    sessions_finished: number;
+    records: number;
+    attendance_rate: number;
+    punctuality_index: number;
+  }>;
+  courses_by_batch: Array<{
+    course_id: string;
+    course_code?: string;
+    course_name?: string;
+    class_year: number;
+    section: number;
+    sessions_finished: number;
+    attendance_rate: number;
+  }>;
 }
 
 export interface ReportBuildRequest {
@@ -297,6 +326,8 @@ export interface ReportBuildRequest {
   from?: string;
   to?: string;
   include_charts?: boolean;
+  class_year?: number;
+  section?: number;
 }
 
 export interface ReportDocument {

@@ -75,7 +75,7 @@ export default function AdminLogin() {
               <ShieldCheck size={32} />
             </div>
             <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white mb-2 tracking-tight">Admin Portal</h1>
-            <p className="text-slate-500 dark:text-neutral-400 text-sm">Sign in to manage the Smart Campus system.</p>
+            <p className="text-slate-500 dark:text-neutral-400 text-sm">Sign in to the Digital Attendance System management console.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">

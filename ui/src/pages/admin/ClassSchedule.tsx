@@ -1,283 +1,313 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api } from '../../api';
-import type { AttendanceRecordWithStudent, Class, Course, Session } from '../../api';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { Badge } from "../../components/ui/badge";
-import { Card, CardContent } from "../../components/ui/card";
-import { Calendar, Clock, Users, Loader2, BookOpen, Activity } from 'lucide-react';
-import './ClassSchedule.css';
+import { api } from '@/api';
+import type { AttendanceRecordWithStudent, Class, Course, Session, UniversityIntelligence } from '@/api';
+import { PageHeader } from '@/components/admin/PageHeader';
+import { MetricCard } from '@/components/admin/MetricCard';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { buildCourseNameMap, buildInstructorNameMap, formatStatus } from '@/lib/admin/metrics';
+import { Activity, Calendar, Clock, Loader2, Search } from 'lucide-react';
 
-type ViewMode = 'day' | 'week';
+const PAGE_SIZE = 12;
+
 type StatusFilter = 'all' | 'upcoming' | 'inprogress' | 'completed';
 
-function isCompletedStatus(status: string) {
+type Row = {
+  session: Session;
+  courseName: string;
+  classLabel: string;
+  instructorName: string;
+  enrolled: number;
+  present: number;
+  attendancePct: number | null;
+};
+
+function isCompleted(status: string) {
   return status === 'finished' || status === 'completed';
 }
 
-function shortId(id: string) {
-  return id.length > 10 ? `${id.slice(0, 6)}…${id.slice(-3)}` : id;
+function marksSummary(records: AttendanceRecordWithStudent[]) {
+  const enrolled = records.length;
+  const present = records.filter((r) => r.status === 'present' || r.status === 'late').length;
+  const pct = enrolled > 0 ? Math.round((present / enrolled) * 100) : null;
+  return { enrolled, present, pct };
 }
-
-function attendanceStatsFromRecords(records: AttendanceRecordWithStudent[]) {
-  const total = records.length;
-  const present = records.filter(r => r.status === 'present').length;
-  const attendancePct = total > 0 ? Math.round((present / total) * 100) : 0;
-  return { total, present, attendancePct };
-}
-
-
-
-type ScheduleItem = {
-  session_id: string;
-  instructor_id: string;
-  courseName: string;
-  courseCode: string;
-  classLabel: string;
-  status: string;
-  progressPercent: number | null;
-};
 
 export default function ClassSchedule() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [items, setItems] = useState<ScheduleItem[]>([]);
-  const [viewMode, setViewMode] = useState<ViewMode>('day');
+  const [rows, setRows] = useState<Row[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     let mounted = true;
-    const load = async () => {
+    (async () => {
       setLoading(true);
       setError(null);
       try {
-        const sessions = await api.allSessions();
+        const [sessions, intel] = await Promise.all([
+          api.allSessions(),
+          api.universityAnalytics().catch(() => null as UniversityIntelligence | null),
+        ]);
 
-        const maxFetch = viewMode === 'day' ? 18 : 30;
+        const courseNames = buildCourseNameMap(intel);
+        const instructorNames = buildInstructorNameMap(intel);
+
         const sorted = [...sessions].sort((a, b) => {
-          const prio = (s: Session) => (s.status === 'active' ? 0 : s.status === 'incoming' ? 1 : 2);
-          return prio(a) - prio(b);
+          const prio = (s: Session) =>
+            s.status === 'active' ? 0 : s.status === 'incoming' ? 1 : 2;
+          return prio(a) - prio(b) || new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
         });
-        const slice = sorted.slice(0, maxFetch);
 
-        const courseIds = Array.from(new Set(slice.map(s => s.course_id)));
-        const classIds = Array.from(new Set(slice.map(s => s.class_id)));
+        const courseCache = new Map<string, Course>();
+        const classCache = new Map<string, Class>();
 
-        const coursesById = new Map<string, Course>();
-        const classesById = new Map<string, Class>();
-
-        await Promise.all(
-          courseIds.map(async id => {
-            try {
-              const c = await api.courseDetails(id);
-              coursesById.set(id, c);
-            } catch {
-              // Ignore per-item failures.
+        const enriched: Row[] = await Promise.all(
+          sorted.map(async (session) => {
+            let course = courseCache.get(session.course_id);
+            if (!course) {
+              course = await api.courseDetails(session.course_id).catch(() => undefined);
+              if (course) courseCache.set(session.course_id, course);
             }
+            let cls = classCache.get(session.class_id);
+            if (!cls) {
+              cls = await api.classDetails(session.class_id).catch(() => undefined);
+              if (cls) classCache.set(session.class_id, cls);
+            }
+
+            const records = await api.sessionRecords(session.id).catch(() => [] as AttendanceRecordWithStudent[]);
+            const summary = marksSummary(records);
+
+            return {
+              session,
+              courseName:
+                courseNames.get(session.course_id) ?? course?.name ?? session.course_id.slice(0, 8),
+              classLabel: cls ? `Year ${cls.year} · Section ${cls.section}` : '—',
+              instructorName:
+                instructorNames.get(session.instructor_id) ??
+                session.instructor_id.slice(0, 8),
+              enrolled: summary.enrolled,
+              present: summary.present,
+              attendancePct: summary.pct,
+            };
           })
         );
 
-        await Promise.all(
-          classIds.map(async id => {
-            try {
-              const cl = await api.classDetails(id);
-              classesById.set(id, cl);
-            } catch {
-              // Ignore per-item failures.
-            }
-          })
-        );
-
-        const recordsBySession = await Promise.all(
-          slice.map(s => api.sessionRecords(s.id).catch(() => [] as AttendanceRecordWithStudent[]))
-        );
-
-        const next: ScheduleItem[] = slice.map((s, i) => {
-          const recs = recordsBySession[i];
-          const st = attendanceStatsFromRecords(recs);
-          const course = coursesById.get(s.course_id);
-          const cls = classesById.get(s.class_id);
-          return {
-            session_id: s.id,
-            instructor_id: s.instructor_id,
-            courseName: course?.name ?? s.course_id,
-            courseCode: course?.course_id ?? s.course_id.substring(0, 8),
-            classLabel: cls ? `Year ${cls.year} · Section ${cls.section}` : '',
-            status: s.status,
-            progressPercent: recs.length > 0 ? st.attendancePct : null,
-          };
-        });
-
-        if (mounted) setItems(next);
+        if (mounted) setRows(enriched);
       } catch (e) {
-        if (mounted) setError(e instanceof Error ? e.message : 'Failed to load class schedule');
+        if (mounted) setError(e instanceof Error ? e.message : 'Failed to load schedule');
       } finally {
         if (mounted) setLoading(false);
       }
-    };
-
-    load();
+    })();
     return () => {
       mounted = false;
     };
-  }, [viewMode]);
+  }, []);
 
-  const visible = useMemo(() => {
-    return items.filter(it => {
-      if (statusFilter === 'all') return true;
-      if (statusFilter === 'upcoming') return it.status === 'incoming';
-      if (statusFilter === 'inprogress') return it.status === 'active';
-      if (statusFilter === 'completed') return isCompletedStatus(it.status);
-      return true;
-    });
-  }, [items, statusFilter]);
+  const filtered = useMemo(() => {
+    let list = rows;
+    if (statusFilter === 'upcoming') list = list.filter((r) => r.session.status === 'incoming');
+    else if (statusFilter === 'inprogress') list = list.filter((r) => r.session.status === 'active');
+    else if (statusFilter === 'completed') list = list.filter((r) => isCompleted(r.session.status));
 
-  const allSessionsCounts = useMemo(() => {
-    const total = items.length;
-    const inprogress = items.filter(i => i.status === 'active').length;
-    const upcoming = items.filter(i => i.status === 'incoming').length;
-    const completed = items.filter(i => isCompletedStatus(i.status)).length;
-    return { total, inprogress, upcoming, completed };
-  }, [items]);
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'active': return <Badge className="bg-emerald-500">In Progress</Badge>;
-      case 'incoming': return <Badge variant="secondary" className="bg-amber-100 text-amber-700">Upcoming</Badge>;
-      case 'completed':
-      case 'finished': return <Badge variant="outline" className="text-slate-400">Completed</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (r) =>
+          r.courseName.toLowerCase().includes(q) ||
+          r.instructorName.toLowerCase().includes(q) ||
+          r.classLabel.toLowerCase().includes(q)
+      );
     }
+    return list;
+  }, [rows, statusFilter, search]);
+
+  const counts = useMemo(() => {
+    return {
+      total: rows.length,
+      inprogress: rows.filter((r) => r.session.status === 'active').length,
+      upcoming: rows.filter((r) => r.session.status === 'incoming').length,
+      completed: rows.filter((r) => isCompleted(r.session.status)).length,
+    };
+  }, [rows]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  useEffect(() => {
+    if (page > totalPages) setPage(1);
+  }, [totalPages, page]);
+
+  const statusBadge = (status: string) => {
+    if (status === 'active') return <Badge>In progress</Badge>;
+    if (status === 'incoming') return <Badge variant="secondary">Scheduled</Badge>;
+    if (isCompleted(status)) return <Badge variant="outline">Completed</Badge>;
+    return <Badge variant="outline">{formatStatus(status)}</Badge>;
   };
 
   return (
-    <div className="space-y-8 animate-fade-in">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Class Schedule</h1>
-          <p className="text-slate-500 font-medium mt-1">Institutional timetable and session tracking</p>
-        </div>
+    <div className="mx-auto max-w-7xl space-y-8 pb-10">
+      <PageHeader
+        title="Class schedule"
+        description="Every department session with live status and attendance marks where a session has been closed."
+      />
 
-        <div className="flex items-center gap-4">
-          <div className="bg-slate-100 p-1 rounded-xl flex items-center">
-            <button 
-                className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${viewMode === 'day' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
-                onClick={() => setViewMode('day')}
-            >
-              Day
-            </button>
-            <button 
-                className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${viewMode === 'week' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
-                onClick={() => setViewMode('week')}
-            >
-              Week
-            </button>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricCard title="All sessions" value={counts.total} sub="In the system" icon={<Calendar className="h-5 w-5" />} />
+        <MetricCard title="In progress" value={counts.inprogress} sub="Being marked now" icon={<Activity className="h-5 w-5" />} />
+        <MetricCard title="Scheduled" value={counts.upcoming} sub="Not started" icon={<Clock className="h-5 w-5" />} />
+        <MetricCard title="Completed" value={counts.completed} sub="Finished sessions" icon={<Calendar className="h-5 w-5" />} />
+      </div>
+
+      <Card>
+        <CardHeader className="pb-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <CardTitle className="text-base">Session list</CardTitle>
+              <CardDescription>
+                Showing {filtered.length} session{filtered.length !== 1 ? 's' : ''}
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <div className="relative w-full sm:w-56">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search course or instructor"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setPage(1);
+                  }}
+                  className="pl-8"
+                />
+              </div>
+              <Select
+                value={statusFilter}
+                onValueChange={(v) => {
+                  setStatusFilter(v as StatusFilter);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-[160px]">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="inprogress">In progress</SelectItem>
+                  <SelectItem value="upcoming">Scheduled</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-
-          <select 
-            className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-primary/10 transition-all"
-            value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value as StatusFilter)}
-          >
-            <option value="all">All Sessions</option>
-            <option value="upcoming">Upcoming</option>
-            <option value="inprogress">In Progress</option>
-            <option value="completed">Completed</option>
-          </select>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
-            <Loader2 className="animate-spin text-primary" size={32} />
-            <span className="text-slate-500 font-medium">Loading schedule...</span>
-        </div>
-      ) : error ? (
-        <div className="p-8 bg-red-50 text-red-600 rounded-2xl border border-red-100 font-bold">
-            ⚠ {error}
-        </div>
-      ) : (
-        <Card className="border-slate-50 shadow-md overflow-hidden rounded-[2.5rem]">
-            <CardContent className="p-0">
-                <Table>
-                    <TableHeader className="bg-slate-50/50">
-                        <TableRow className="hover:bg-transparent">
-                            <TableHead className="px-8 font-bold text-slate-500">Course & Class</TableHead>
-                            <TableHead className="font-bold text-slate-500">Instructor</TableHead>
-                            <TableHead className="text-center font-bold text-slate-500">Status</TableHead>
-                            <TableHead className="text-right px-8 font-bold text-slate-500">Attendance Rate</TableHead>
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {visible.map((it) => (
-                            <TableRow key={it.session_id} className="hover:bg-slate-50/50 transition-colors h-20">
-                                <TableCell className="px-8">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
-                                            <BookOpen size={18} />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <span className="font-bold text-slate-900 leading-tight">{it.courseName}</span>
-                                            <div className="flex items-center gap-2 mt-0.5">
-                                                <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">{it.courseCode}</span>
-                                                <span className="text-slate-300 text-[10px]">•</span>
-                                                <span className="text-xs font-bold text-slate-400">{it.classLabel}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </TableCell>
-                                <TableCell>
-                                    <div className="flex items-center gap-2 text-slate-600">
-                                        <Users size={14} className="text-slate-400" />
-                                        <span className="text-sm font-medium">Instructor {shortId(it.instructor_id)}</span>
-                                    </div>
-                                </TableCell>
-                                <TableCell className="text-center">
-                                    {getStatusBadge(it.status)}
-                                </TableCell>
-                                <TableCell className="text-right px-8">
-                                    <div className="flex flex-col items-end">
-                                        <span className={`text-lg font-black ${it.progressPercent === null ? 'text-slate-200' : it.progressPercent < 75 ? 'text-rose-500' : 'text-indigo-600'}`}>
-                                            {it.progressPercent === null ? '—' : `${it.progressPercent}%`}
-                                        </span>
-                                        {it.progressPercent !== null && (
-                                            <div className="w-20 h-1 bg-slate-100 rounded-full mt-1 overflow-hidden">
-                                                <div 
-                                                    className={`h-full ${it.progressPercent < 75 ? 'bg-rose-500' : 'bg-indigo-500'}`}
-                                                    style={{ width: `${it.progressPercent}%` }}
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
-                                </TableCell>
-                            </TableRow>
-                        ))}
-                    </TableBody>
-                </Table>
-            </CardContent>
-        </Card>
-      )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <SummaryStat title="Total Classes" value={allSessionsCounts.total} icon={<BookOpen size={20} />} color="text-slate-600" />
-        <SummaryStat title="In Progress" value={allSessionsCounts.inprogress} icon={<Activity className="animate-pulse" size={20} />} color="text-emerald-600" />
-        <SummaryStat title="Upcoming" value={allSessionsCounts.upcoming} icon={<Calendar size={20} />} color="text-amber-600" />
-        <SummaryStat title="Completed" value={allSessionsCounts.completed} icon={<Clock size={20} />} color="text-indigo-600" />
-      </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="flex h-48 items-center justify-center text-muted-foreground">
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              Loading schedule…
+            </div>
+          ) : error ? (
+            <p className="p-8 text-center text-sm text-destructive">{error}</p>
+          ) : (
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="pl-6">Course</TableHead>
+                    <TableHead>Section</TableHead>
+                    <TableHead>Instructor</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Enrolled</TableHead>
+                    <TableHead className="pr-6">Attendance</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pageRows.map((r) => (
+                    <TableRow key={r.session.id}>
+                      <TableCell className="pl-6 font-medium">{r.courseName}</TableCell>
+                      <TableCell className="text-muted-foreground">{r.classLabel}</TableCell>
+                      <TableCell>{r.instructorName}</TableCell>
+                      <TableCell>{statusBadge(r.session.status)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {r.enrolled > 0 ? r.enrolled : '—'}
+                      </TableCell>
+                      <TableCell className="pr-6 min-w-[140px]">
+                        {r.attendancePct === null ? (
+                          <span className="text-xs text-muted-foreground">No marks yet</span>
+                        ) : (
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-xs tabular-nums">
+                              <span>
+                                {r.present}/{r.enrolled} present+late
+                              </span>
+                              <span className="font-medium">{r.attendancePct}%</span>
+                            </div>
+                            <Progress value={r.attendancePct} className="h-1.5" />
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {pageRows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                        No sessions match your filters.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between border-t border-border px-6 py-4">
+                  <p className="text-sm text-muted-foreground">
+                    Page {page} of {totalPages}
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page <= 1}
+                      onClick={() => setPage((p) => p - 1)}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page >= totalPages}
+                      onClick={() => setPage((p) => p + 1)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
-
-function SummaryStat({ title, value, icon, color }: { title: string; value: number; icon: React.ReactNode; color: string }) {
-  return (
-    <Card className="border-slate-50 shadow-sm rounded-3xl overflow-hidden group hover:shadow-md transition-all">
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{title}</span>
-            <div className={`${color} opacity-60`}>{icon}</div>
-        </div>
-        <div className="text-3xl font-black text-slate-900">{value}</div>
-      </CardContent>
-    </Card>
-  );
-}
-

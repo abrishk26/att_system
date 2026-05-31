@@ -1,9 +1,28 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import type { UniversityIntelligence } from '../../api';
-import './StaffManagement.css';
+import { PageHeader } from '@/components/admin/PageHeader';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Loader2 } from 'lucide-react';
 
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 10;
 
 type InstructorRow = {
   instructor_id: string;
@@ -13,46 +32,58 @@ type InstructorRow = {
   attendance_rate: number;
   punctuality_index: number;
   completion_proxy: number;
-  courses: { course_id: string; course_name?: string; class_label?: string; attendance_rate: number; sessions_finished: number }[];
+  courses: {
+    course_id: string;
+    course_name?: string;
+    class_label?: string;
+    attendance_rate: number;
+    sessions_finished: number;
+  }[];
 };
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+function rateVariant(rate: number): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (rate >= 85) return 'default';
+  if (rate >= 70) return 'secondary';
+  if (rate >= 55) return 'outline';
+  return 'destructive';
+}
 
 export default function StaffManagement() {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<InstructorRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const [selectedInstructor, setSelectedInstructor] = useState<InstructorRow | null>(null);
+  const [selected, setSelected] = useState<InstructorRow | null>(null);
 
   useEffect(() => {
     let mounted = true;
-    const load = async () => {
+    (async () => {
       setLoading(true);
       setError(null);
       try {
         const intel: UniversityIntelligence = await api.universityAnalytics();
-
-        // Build course/class breakdown per instructor from sections + sessions
         const sessions = await api.allSessions();
         const instructorCourses = new Map<string, Map<string, { course_id: string; class_id: string }>>();
         for (const s of sessions) {
-          if (!instructorCourses.has(s.instructor_id)) instructorCourses.set(s.instructor_id, new Map());
+          if (!instructorCourses.has(s.instructor_id)) {
+            instructorCourses.set(s.instructor_id, new Map());
+          }
           const key = `${s.course_id}__${s.class_id}`;
-          instructorCourses.get(s.instructor_id)!.set(key, { course_id: s.course_id, class_id: s.class_id });
+          instructorCourses.get(s.instructor_id)!.set(key, {
+            course_id: s.course_id,
+            class_id: s.class_id,
+          });
         }
+        const sectionMap = new Map(intel.sections.map((sec) => [`${sec.course_id}__${sec.class_id}`, sec]));
+        const courseMap = new Map(intel.courses.map((c) => [c.course_id, c]));
 
-        // Index sections by course_id+class_id for enrichment
-        const sectionMap = new Map<string, typeof intel.sections[0]>();
-        for (const sec of intel.sections) {
-          sectionMap.set(`${sec.course_id}__${sec.class_id}`, sec);
-        }
-
-        // Index courses by course_id for enrichment
-        const courseMap = new Map<string, typeof intel.courses[0]>();
-        for (const c of intel.courses) {
-          courseMap.set(c.course_id, c);
-        }
-
-        const next: InstructorRow[] = intel.instructors.map(i => {
+        const next: InstructorRow[] = intel.instructors.map((i) => {
           const pairs = instructorCourses.get(i.instructor_id);
           const courses: InstructorRow['courses'] = [];
           if (pairs) {
@@ -61,8 +92,8 @@ export default function StaffManagement() {
               const crs = courseMap.get(pair.course_id);
               courses.push({
                 course_id: pair.course_id,
-                course_name: sec?.course_name ?? crs?.course_name ?? undefined,
-                class_label: sec?.class_label ?? undefined,
+                course_name: sec?.course_name ?? crs?.course_name,
+                class_label: sec?.class_label,
                 attendance_rate: sec?.attendance_rate ?? 0,
                 sessions_finished: sec?.sessions_finished ?? 0,
               });
@@ -79,255 +110,186 @@ export default function StaffManagement() {
             courses,
           };
         });
-
         next.sort((a, b) => b.sessions_total - a.sessions_total);
         if (mounted) setRows(next);
       } catch (e) {
-        if (mounted) setError(e instanceof Error ? e.message : 'Failed to load staff data');
+        if (mounted) setError(e instanceof Error ? e.message : 'Failed to load staff');
       } finally {
         if (mounted) setLoading(false);
       }
+    })();
+    return () => {
+      mounted = false;
     };
-    load();
-    return () => { mounted = false; };
   }, []);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const paginatedRows = useMemo(() => {
+  const paginated = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
     return rows.slice(start, start + PAGE_SIZE);
   }, [rows, page]);
 
-  // Ensure page stays in bounds
-  useEffect(() => {
-    if (page > totalPages) setPage(totalPages);
-  }, [totalPages, page]);
-
-  function getInitials(name: string) {
-    const parts = name.trim().split(/\s+/);
-    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-    return name.slice(0, 2).toUpperCase();
-  }
-
-  function rateColor(rate: number) {
-    if (rate >= 85) return 'var(--rate-excellent)';
-    if (rate >= 70) return 'var(--rate-good)';
-    if (rate >= 55) return 'var(--rate-fair)';
-    return 'var(--rate-poor)';
-  }
+  const avgAttendance =
+    rows.length === 0 ? 0 : Math.round(rows.reduce((a, r) => a + r.attendance_rate, 0) / rows.length);
 
   return (
-    <div className="staff-page">
-      <div className="staff-header">
-        <div>
-          <h2>Staff Management</h2>
-          <p className="page-sub">Faculty overview &amp; performance insights</p>
-        </div>
+    <div className="mx-auto max-w-[1400px] space-y-6 pb-10">
+      <PageHeader
+        title="Staff management"
+        description="Instructor workload, completion rates, and course-level performance across the department."
+      />
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Instructors</CardDescription>
+            <CardTitle className="text-2xl">{rows.length}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Total sessions</CardDescription>
+            <CardTitle className="text-2xl">
+              {rows.reduce((a, r) => a + r.sessions_total, 0)}
+            </CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Avg. attendance</CardDescription>
+            <CardTitle className="text-2xl">{avgAttendance}%</CardTitle>
+          </CardHeader>
+        </Card>
       </div>
 
-      {/* ── Summary Card (moved above table) ── */}
-      <div className="staff-summary">
-        <SummaryCard title="Total Staff" value={rows.length} hint="Instructors in the system" icon="👥" />
-        <SummaryCard
-          title="Total Sessions"
-          value={rows.reduce((a, r) => a + r.sessions_total, 0)}
-          hint="Across all instructors"
-          icon="📋"
-        />
-        <SummaryCard
-          title="Avg. Attendance"
-          value={
-            rows.length === 0
-              ? 0
-              : Math.round(
-                  rows.reduce((a, r) => a + r.attendance_rate, 0) / rows.length
-                )
-          }
-          hint="Overall attendance rate"
-          icon="📊"
-          suffix="%"
-        />
-      </div>
-
-      {/* ── Staff Table ── */}
-      <div className="staff-table card">
-        {loading ? (
-          <div className="loading-row">
-            <div className="loading-spinner" />
-            Loading staff data…
-          </div>
-        ) : error ? (
-          <div className="error-row">⚠ {error}</div>
-        ) : rows.length === 0 ? (
-          <div className="empty-row">No staff data available</div>
-        ) : (
-          <>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Staff Member</th>
-                  <th>Sessions</th>
-                  <th>Attendance Rate</th>
-                  <th>Punctuality</th>
-                  <th>Completion</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedRows.map(r => (
-                  <tr key={r.instructor_id} className="staff-row-hover">
-                    <td>
-                      <div className="staff-cell">
-                        <div className="avatar">{getInitials(r.name)}</div>
-                        <div className="staff-meta">
-                          <button
-                            className="staff-name-btn"
-                            type="button"
-                            onClick={() => setSelectedInstructor(r)}
-                            title="View details"
-                          >
-                            {r.name}
-                          </button>
-                          <div className="staff-sub">
-                            {r.courses.length} course{r.courses.length !== 1 ? 's' : ''}
+      <Card className="border-border shadow-sm overflow-hidden">
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="flex h-48 items-center justify-center text-muted-foreground">
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              Loading staff…
+            </div>
+          ) : error ? (
+            <p className="p-8 text-center text-destructive">{error}</p>
+          ) : (
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="pl-6">Instructor</TableHead>
+                    <TableHead className="text-right">Sessions</TableHead>
+                    <TableHead className="text-right">Attendance</TableHead>
+                    <TableHead className="text-right">Punctuality</TableHead>
+                    <TableHead className="text-right pr-6">Completion</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {paginated.map((r) => (
+                    <TableRow
+                      key={r.instructor_id}
+                      className="cursor-pointer hover:bg-muted/40"
+                      onClick={() => setSelected(r)}
+                    >
+                      <TableCell className="pl-6">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="h-9 w-9">
+                            <AvatarFallback className="text-xs">{initials(r.name)}</AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <p className="font-medium">{r.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {r.courses.length} course{r.courses.length !== 1 ? 's' : ''}
+                            </p>
                           </div>
                         </div>
-                      </div>
-                    </td>
-                    <td>
-                      <span className="sessions-chip">
-                        {r.sessions_finished}<span className="sessions-dim">/{r.sessions_total}</span>
-                      </span>
-                    </td>
-                    <td>
-                      <span className="rate-badge" style={{ '--rate-clr': rateColor(r.attendance_rate) } as React.CSSProperties}>
-                        {r.attendance_rate.toFixed(1)}%
-                      </span>
-                    </td>
-                    <td>{r.punctuality_index.toFixed(1)}%</td>
-                    <td>{r.completion_proxy.toFixed(1)}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            {/* ── Pagination ── */}
-            {totalPages > 1 && (
-              <div className="pagination">
-                <button
-                  className="page-btn"
-                  disabled={page <= 1}
-                  onClick={() => setPage(p => p - 1)}
-                >
-                  ‹ Prev
-                </button>
-                <div className="page-numbers">
-                  {Array.from({ length: totalPages }, (_, i) => i + 1).map(n => (
-                    <button
-                      key={n}
-                      className={`page-num ${n === page ? 'page-active' : ''}`}
-                      onClick={() => setPage(n)}
-                    >
-                      {n}
-                    </button>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {r.sessions_finished}/{r.sessions_total}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant={rateVariant(r.attendance_rate)}>
+                          {r.attendance_rate.toFixed(1)}%
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {r.punctuality_index.toFixed(1)}%
+                      </TableCell>
+                      <TableCell className="text-right pr-6 tabular-nums">
+                        {r.completion_proxy.toFixed(1)}%
+                      </TableCell>
+                    </TableRow>
                   ))}
+                </TableBody>
+              </Table>
+              {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-2 border-t border-border p-4">
+                  <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+                    Previous
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    Page {page} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= totalPages}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    Next
+                  </Button>
                 </div>
-                <button
-                  className="page-btn"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage(p => p + 1)}
-                >
-                  Next ›
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* ── Detail Modal ── */}
-      {selectedInstructor && (
-        <div className="modal-backdrop" onClick={() => setSelectedInstructor(null)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <div className="modal-avatar">{getInitials(selectedInstructor.name)}</div>
-              <div>
-                <h3 className="modal-name">{selectedInstructor.name}</h3>
-                <p className="modal-id">ID: {selectedInstructor.instructor_id}</p>
-              </div>
-              <button className="modal-close" onClick={() => setSelectedInstructor(null)}>✕</button>
-            </div>
-
-            <div className="modal-stats">
-              <div className="modal-stat">
-                <div className="modal-stat-val">{selectedInstructor.sessions_total}</div>
-                <div className="modal-stat-label">Total Sessions</div>
-              </div>
-              <div className="modal-stat">
-                <div className="modal-stat-val">{selectedInstructor.sessions_finished}</div>
-                <div className="modal-stat-label">Completed</div>
-              </div>
-              <div className="modal-stat">
-                <div className="modal-stat-val" style={{ color: rateColor(selectedInstructor.attendance_rate) }}>
-                  {selectedInstructor.attendance_rate.toFixed(1)}%
-                </div>
-                <div className="modal-stat-label">Attendance</div>
-              </div>
-              <div className="modal-stat">
-                <div className="modal-stat-val">{selectedInstructor.punctuality_index.toFixed(1)}%</div>
-                <div className="modal-stat-label">Punctuality</div>
-              </div>
-            </div>
-
-            <div className="modal-section">
-              <h4>Courses &amp; Classes</h4>
-              {selectedInstructor.courses.length === 0 ? (
-                <p className="modal-empty">No course assignments found.</p>
-              ) : (
-                <table className="table modal-table">
-                  <thead>
-                    <tr>
-                      <th>Course</th>
-                      <th>Class</th>
-                      <th>Sessions</th>
-                      <th>Attendance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedInstructor.courses.map((c, idx) => (
-                      <tr key={idx}>
-                        <td>{c.course_name ?? c.course_id.slice(0, 8)}</td>
-                        <td>{c.class_label ?? '—'}</td>
-                        <td>{c.sessions_finished}</td>
-                        <td>
-                          <span
-                            className="rate-badge"
-                            style={{ '--rate-clr': rateColor(c.attendance_rate) } as React.CSSProperties}
-                          >
-                            {c.attendance_rate.toFixed(1)}%
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+            </>
+          )}
+        </CardContent>
+      </Card>
 
-function SummaryCard({ title, value, hint, icon, suffix }: { title: string; value: number; hint: string; icon: string; suffix?: string }) {
-  return (
-    <div className="summary-card card">
-      <div className="summary-icon">{icon}</div>
-      <div>
-        <div className="summary-title">{title}</div>
-        <div className="summary-value">{value}{suffix ?? ''}</div>
-        <div className="summary-hint">{hint}</div>
-      </div>
+      <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{selected?.name}</DialogTitle>
+          </DialogHeader>
+          {selected && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-muted-foreground">Finished</p>
+                  <p className="text-xl font-bold">
+                    {selected.sessions_finished}/{selected.sessions_total}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-muted-foreground">Attendance</p>
+                  <p className="text-xl font-bold">{selected.attendance_rate.toFixed(1)}%</p>
+                </div>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Course</TableHead>
+                    <TableHead className="text-right">Sessions</TableHead>
+                    <TableHead className="text-right">Rate</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {selected.courses.map((c, i) => (
+                    <TableRow key={i}>
+                      <TableCell>
+                        {c.course_name ?? c.course_id.slice(0, 8)}
+                        {c.class_label && (
+                          <span className="text-xs text-muted-foreground"> · {c.class_label}</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">{c.sessions_finished}</TableCell>
+                      <TableCell className="text-right">{c.attendance_rate.toFixed(1)}%</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

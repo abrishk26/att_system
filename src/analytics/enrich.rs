@@ -97,6 +97,42 @@ impl EnrichCache {
         Ok((Some(code), Some(name)))
     }
 
+    pub async fn ensure_class(
+        &mut self,
+        state: &AppState,
+        id: Uuid,
+    ) -> Result<Option<Class>, (StatusCode, Json<ErrorResponse>)> {
+        if let Some(cl) = self.classes.get(&id) {
+            return Ok(Some(cl.clone()));
+        }
+        let r = state
+            .client
+            .request(Method::GET, format!("{}/class/{}", state.data_source_url, id))
+            .send()
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        message: "enrichment service unavailable".into(),
+                    }),
+                )
+            })?;
+        if r.status() != StatusCode::OK {
+            return Ok(None);
+        }
+        let cl: Class = r.json().await.map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    message: "failed to parse class".into(),
+                }),
+            )
+        })?;
+        self.classes.insert(id, cl.clone());
+        Ok(Some(cl))
+    }
+
     pub async fn class_year(
         &mut self,
         state: &AppState,

@@ -7,14 +7,13 @@ import {
     UserCheck,
     LogOut,
     Menu,
-    Search,
     ChevronRight,
     ChevronLeft,
     X,
     ShieldCheck,
     FileText,
     Sun,
-    Moon
+    Moon,
 } from 'lucide-react';
 import { NotificationBell } from '../NotificationBell';
 import { useDarkMode } from '../../hooks/useDarkMode';
@@ -41,17 +40,18 @@ export default function InstructorLayout() {
             if (!user) {
                 navigate('/instructor/login', { replace: true });
             } else if (user.role !== 'instructor' && user.role !== 'admin') {
-                // If student tries to access instructor portal, send them back
                 navigate('/student/home', { replace: true });
             }
         }
     }, [user, isLoading, navigate]);
 
-    if (isLoading || !user || (user.role !== 'instructor' && user.role !== 'admin')) return (
-        <div className="min-h-screen bg-slate-50 dark:bg-black flex items-center justify-center transition-colors duration-200">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-        </div>
-    );
+    if (isLoading || !user || (user.role !== 'instructor' && user.role !== 'admin')) {
+        return (
+            <div className="flex min-h-screen items-center justify-center bg-background">
+                <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+            </div>
+        );
+    }
 
     const instructorName = `${user.first_name}${user.last_name ? ` ${user.last_name}` : ''}`;
 
@@ -69,40 +69,49 @@ export default function InstructorLayout() {
     };
 
     return (
-        <div className="min-h-screen bg-slate-50 dark:bg-black flex overflow-hidden font-sans transition-colors duration-200 text-slate-900 dark:text-neutral-100">
-            {/* Sidebar */}
+        <div className="flex min-h-screen overflow-hidden bg-background font-sans text-foreground">
             <aside
-                className={`fixed inset-y-0 left-0 z-50 bg-white dark:bg-neutral-900 border-r border-slate-200 dark:border-neutral-800 transform transition-all duration-300 ease-in-out lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-                    } ${isCollapsed ? 'w-20 lg:w-20' : 'w-72 lg:w-72'}`}
+                className={`fixed inset-y-0 left-0 z-50 transform border-r border-border bg-card transition-all duration-300 ease-in-out lg:relative lg:translate-x-0 ${
+                    isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+                } ${isCollapsed ? 'w-20 lg:w-20' : 'w-72 lg:w-72'}`}
             >
-                <div className="h-full flex flex-col">
-                    {/* Logo & Close Button */}
-                    <div className={`p-6 flex items-center border-b border-slate-50 dark:border-neutral-800/60 ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
+                <div className="flex h-full flex-col">
+                    <div
+                        className={`flex items-center border-b border-border p-6 ${
+                            isCollapsed ? 'justify-center' : 'justify-between'
+                        }`}
+                    >
                         <Link to="/" className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/20 shrink-0">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
                                 <UserCheck size={24} />
                             </div>
                             {!isCollapsed && (
-                                <div className="transition-opacity duration-300 opacity-100 whitespace-nowrap">
-                                    <span className="font-bold text-lg tracking-tight text-slate-900 dark:text-white block leading-tight">Instructor</span>
-                                    <span className="text-[10px] text-slate-400 dark:text-neutral-500 font-bold uppercase tracking-widest text-primary">Management Portal</span>
+                                <div className="whitespace-nowrap">
+                                    <span className="block text-lg font-semibold tracking-tight">
+                                        Digital Attendance
+                                    </span>
+                                    <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                                        Instructor portal
+                                    </span>
                                 </div>
                             )}
                         </Link>
                         {!isCollapsed && (
                             <button
+                                type="button"
                                 onClick={() => setIsSidebarOpen(false)}
-                                className="lg:hidden p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-neutral-800 text-slate-400 dark:text-neutral-500 transition-colors"
+                                className="rounded-lg p-2 text-muted-foreground hover:bg-muted lg:hidden"
                             >
                                 <X size={20} />
                             </button>
                         )}
                     </div>
 
-                    {/* Navigation */}
-                    <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
+                    <nav className="flex-1 space-y-1 overflow-y-auto px-4 py-4">
                         {!isCollapsed && (
-                            <p className="px-4 text-[10px] font-bold text-slate-400 dark:text-neutral-500 uppercase tracking-widest mb-4">Main Menu</p>
+                            <p className="mb-4 px-4 text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                                Main menu
+                            </p>
                         )}
                         {menuItems.map((item) => {
                             const isActive = location.pathname.startsWith(item.path);
@@ -111,14 +120,17 @@ export default function InstructorLayout() {
                                     key={item.title}
                                     to={item.path}
                                     title={isCollapsed ? item.title : ''}
-                                    className={`flex items-center rounded-xl transition-all group ${isActive
-                                        ? 'bg-primary text-white shadow-md shadow-primary/20'
-                                        : 'text-slate-600 dark:text-neutral-400 hover:bg-slate-50 dark:hover:bg-neutral-800 hover:text-primary dark:hover:text-white'
-                                        } ${isCollapsed ? 'justify-center p-3' : 'justify-between px-4 py-3'}`}
+                                    className={`flex items-center rounded-xl transition-all ${
+                                        isActive
+                                            ? 'bg-primary text-primary-foreground shadow-sm'
+                                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                                    } ${isCollapsed ? 'justify-center p-3' : 'justify-between px-4 py-3'}`}
                                 >
                                     <div className="flex items-center gap-3">
-                                        <item.icon size={20} className={`shrink-0 ${isActive ? 'text-white' : 'group-hover:text-primary dark:group-hover:text-indigo-400'}`} />
-                                        {!isCollapsed && <span className="font-medium text-sm whitespace-nowrap">{item.title}</span>}
+                                        <item.icon size={20} className="shrink-0" />
+                                        {!isCollapsed && (
+                                            <span className="text-sm font-medium">{item.title}</span>
+                                        )}
                                     </div>
                                     {!isCollapsed && isActive && <ChevronRight size={16} />}
                                 </Link>
@@ -126,11 +138,13 @@ export default function InstructorLayout() {
                         })}
                     </nav>
 
-                    {/* Collapse Toggle */}
-                    <div className="p-4 mt-auto border-t border-slate-100 dark:border-neutral-800 bg-slate-50/50 dark:bg-neutral-900/50">
+                    <div className="mt-auto border-t border-border bg-muted/30 p-4">
                         <button
+                            type="button"
                             onClick={() => setIsCollapsed(!isCollapsed)}
-                            className={`w-full flex items-center gap-3 px-4 py-3 text-slate-400 dark:text-neutral-500 hover:text-primary dark:hover:text-white hover:bg-slate-50 dark:hover:bg-neutral-800 rounded-xl transition-all font-medium text-sm ${isCollapsed ? 'justify-center p-3' : ''}`}
+                            className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-muted-foreground transition-all hover:bg-muted hover:text-foreground ${
+                                isCollapsed ? 'justify-center p-3' : ''
+                            }`}
                         >
                             {isCollapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
                             {!isCollapsed && <span>Collapse</span>}
@@ -139,39 +153,34 @@ export default function InstructorLayout() {
                 </div>
             </aside>
 
-            {/* Main Content Area */}
-            <div className="flex-1 flex flex-col h-screen overflow-hidden">
-                {/* Header */}
-                <header className="h-16 bg-white dark:bg-neutral-900 border-b border-slate-200 dark:border-neutral-800 flex items-center justify-between px-6 shrink-0 z-40 transition-colors duration-200">
-                    <div className="flex items-center gap-4">
-                        <button
-                            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                            className="lg:hidden p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-neutral-800 text-slate-600 dark:text-neutral-400 transition-colors"
-                        >
-                            <Menu size={20} />
-                        </button>
+            <div className="flex h-screen flex-1 flex-col overflow-hidden">
+                <header className="z-40 flex h-16 shrink-0 items-center justify-between border-b border-border bg-card px-6">
+                    <button
+                        type="button"
+                        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                        className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+                    >
+                        <Menu size={20} />
+                    </button>
 
-                        <div className="hidden md:flex items-center bg-slate-50 dark:bg-neutral-800 border border-slate-100 dark:border-neutral-750 px-3 py-1.5 rounded-xl w-80 focus-within:ring-2 focus-within:ring-primary/10">
-                            <Search size={16} className="text-slate-400 dark:text-neutral-500 mr-2" />
-                            <input
-                                type="text"
-                                placeholder="Search courses or results..."
-                                className="bg-transparent border-none outline-none text-sm text-slate-600 dark:text-slate-300 w-full placeholder:text-slate-400 dark:placeholder:text-neutral-500"
-                            />
-                        </div>
-                    </div>
+                    <div className="hidden flex-1 lg:block" />
 
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
                         <button
+                            type="button"
                             onClick={() => setIsDark(!isDark)}
-                            className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-neutral-800 transition-colors flex items-center justify-center cursor-pointer"
-                            title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+                            className="flex items-center justify-center rounded-xl p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+                            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
                         >
-                            {isDark ? <Sun size={20} className="text-amber-500" /> : <Moon size={20} />}
+                            {isDark ? (
+                                <Sun size={20} className="text-amber-500" />
+                            ) : (
+                                <Moon size={20} />
+                            )}
                         </button>
 
                         <NotificationBell />
-                        <div className="h-8 w-px bg-slate-200 dark:bg-neutral-800 hidden sm:block mx-1"></div>
+                        <div className="mx-1 hidden h-8 w-px bg-border sm:block" />
 
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -181,10 +190,12 @@ export default function InstructorLayout() {
                                 >
                                     <div className="hidden text-right sm:block">
                                         <p className="text-xs text-muted-foreground">Instructor</p>
-                                        <p className="text-sm font-medium text-foreground">{user.first_name}</p>
+                                        <p className="text-sm font-medium text-foreground">
+                                            {user.first_name}
+                                        </p>
                                     </div>
                                     <Avatar className="h-9 w-9">
-                                        <AvatarFallback className="bg-primary text-primary-foreground text-sm font-medium">
+                                        <AvatarFallback className="bg-primary text-sm font-medium text-primary-foreground">
                                             {user.first_name?.charAt(0)}
                                         </AvatarFallback>
                                     </Avatar>
@@ -193,7 +204,9 @@ export default function InstructorLayout() {
                             <DropdownMenuContent align="end" className="w-64">
                                 <DropdownMenuLabel className="font-normal">
                                     <p className="font-medium">{instructorName}</p>
-                                    <p className="text-xs text-muted-foreground capitalize">@{user.username} · {user.role}</p>
+                                    <p className="text-xs capitalize text-muted-foreground">
+                                        @{user.username} · {user.role}
+                                    </p>
                                 </DropdownMenuLabel>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem variant="destructive" onClick={handleLogout}>
@@ -205,18 +218,16 @@ export default function InstructorLayout() {
                     </div>
                 </header>
 
-                {/* Page Content */}
-                <main className="flex-1 overflow-y-auto p-4 md:p-8 animate-fade-in bg-slate-50 dark:bg-black text-slate-900 dark:text-slate-100 transition-colors duration-200">
+                <main className="animate-fade-in flex-1 overflow-y-auto bg-muted/20 p-4 md:p-8">
                     <Outlet context={{ instructorId: user.id }} />
                 </main>
             </div>
 
-            {/* Mobile Overlay */}
             {isSidebarOpen && (
                 <div
-                    className="fixed inset-0 bg-slate-900/10 dark:bg-black/40 backdrop-blur-[2px] z-40 lg:hidden"
+                    className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px] lg:hidden"
                     onClick={() => setIsSidebarOpen(false)}
-                ></div>
+                />
             )}
         </div>
     );

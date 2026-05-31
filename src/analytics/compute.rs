@@ -620,6 +620,112 @@ pub fn anomalies(
     out
 }
 
+/// Per (batch year, section, course) finished-session stats.
+pub fn batch_section_course_rows(
+    sessions: &[Session],
+    records: &[AttendanceRecord],
+    class_meta: impl Fn(Uuid) -> Option<(i32, i32)>,
+) -> Vec<(i32, i32, Uuid, usize, usize, f64, f64)> {
+    let mut m: HashMap<(i32, i32, Uuid), Vec<&Session>> = HashMap::new();
+    for s in sessions {
+        if s.status != "finished" {
+            continue;
+        }
+        let Some((y, sec)) = class_meta(s.class_id) else {
+            continue;
+        };
+        m.entry((y, sec, s.course_id)).or_default().push(s);
+    }
+    let mut out = Vec::new();
+    for ((y, sec, cid), slist) in m {
+        let mut eng = 0usize;
+        let mut tot = 0usize;
+        let mut pres = 0usize;
+        let mut late = 0usize;
+        let mut rec_n = 0usize;
+        for s in &slist {
+            let recs: Vec<_> = records.iter().filter(|r| r.session_id == s.id).collect();
+            rec_n += recs.len();
+            let (p, l, ab, ex) = session_record_stats(
+                &recs.into_iter().cloned().collect::<Vec<_>>(),
+            );
+            tot += p + l + ab + ex;
+            eng += p + l;
+            pres += p;
+            late += l;
+        }
+        let att = if tot > 0 {
+            (eng as f64 / tot as f64) * 100.0
+        } else {
+            0.0
+        };
+        let punct = if pres + late > 0 {
+            (pres as f64 / (pres + late) as f64) * 100.0
+        } else {
+            100.0
+        };
+        out.push((y, sec, cid, slist.len(), rec_n, att, punct));
+    }
+    out.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then(a.1.cmp(&b.1))
+            .then(b.5.partial_cmp(&a.5).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    out
+}
+
+/// Roll up all courses in a batch year + section.
+pub fn batch_section_rows(
+    sessions: &[Session],
+    records: &[AttendanceRecord],
+    class_meta: impl Fn(Uuid) -> Option<(i32, i32)>,
+) -> Vec<(i32, i32, usize, usize, usize, f64, f64)> {
+    let mut m: HashMap<(i32, i32), (Vec<&Session>, HashSet<Uuid>)> = HashMap::new();
+    for s in sessions {
+        if s.status != "finished" {
+            continue;
+        }
+        let Some((y, sec)) = class_meta(s.class_id) else {
+            continue;
+        };
+        let e = m.entry((y, sec)).or_default();
+        e.0.push(s);
+        e.1.insert(s.course_id);
+    }
+    let mut out = Vec::new();
+    for ((y, sec), (slist, courses)) in m {
+        let mut eng = 0usize;
+        let mut tot = 0usize;
+        let mut pres = 0usize;
+        let mut late = 0usize;
+        let mut rec_n = 0usize;
+        for s in &slist {
+            let recs: Vec<_> = records.iter().filter(|r| r.session_id == s.id).collect();
+            rec_n += recs.len();
+            let (p, l, ab, ex) = session_record_stats(
+                &recs.into_iter().cloned().collect::<Vec<_>>(),
+            );
+            tot += p + l + ab + ex;
+            eng += p + l;
+            pres += p;
+            late += l;
+        }
+        let att = if tot > 0 {
+            (eng as f64 / tot as f64) * 100.0
+        } else {
+            0.0
+        };
+        let punct = if pres + late > 0 {
+            (pres as f64 / (pres + late) as f64) * 100.0
+        } else {
+            100.0
+        };
+        out.push((y, sec, slist.len(), rec_n, courses.len(), att, punct));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    out
+}
+
 pub fn cohort_by_class_year(
     sessions: &[Session],
     records: &[AttendanceRecord],

@@ -12,15 +12,22 @@ import {
 import { Bar, Doughnut } from 'react-chartjs-2';
 import { api } from '../../api';
 import type { AttendanceRecordWithStudent, Course, Class, Session } from '../../api';
-import { exportToPDF, exportToExcelFriendlyCsv } from '../../lib/exportUtils';
+import {
+  exportInstitutionalPDF,
+  exportToExcelFriendlyCsv,
+  openPrintableReportHtml,
+} from '../../lib/exportUtils';
+import {
+  buildStudentRosterDocument,
+  rosterToFlatCsv,
+} from '../../lib/admin/rosterReportDocuments';
+import { collectCharts } from '../../lib/admin/chartCapture';
+import { RosterExportBar } from '../../components/admin/roster/RosterExportBar';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Skeleton } from '../../components/ui/skeleton';
 import { Input } from '../../components/ui/input';
 import {
-  Download,
-  FileText,
-  Printer,
   Search,
   ChevronUp,
   ChevronDown,
@@ -128,34 +135,6 @@ function KpiSkeleton() {
   );
 }
 
-// ── Print ──────────────────────────────────────────────────────────────────────
-
-function openPrint(title: string, metaHtml: string, tableHtml: string) {
-  const w = window.open('', '_blank');
-  if (!w) return;
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
-  <title>${title}</title>
-  <style>
-    *{box-sizing:border-box}
-    body{font-family:system-ui,sans-serif;padding:2rem;color:#0f172a;max-width:1100px;margin:0 auto}
-    h1{font-size:1.4rem;margin:0 0 0.25rem;font-weight:800}
-    .meta{color:#64748b;font-size:0.8rem;margin-bottom:1.5rem;display:flex;flex-wrap:wrap;gap:1rem}
-    .meta span{background:#f1f5f9;padding:2px 8px;border-radius:4px}
-    table{width:100%;border-collapse:collapse;font-size:0.8rem}
-    th{background:#1e293b;color:#fff;padding:8px 10px;text-align:left;font-weight:600;font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em}
-    td{padding:7px 10px;border-bottom:1px solid #e2e8f0}
-    tr:nth-child(even) td{background:#f8fafc}
-    .excellent{color:#059669;font-weight:700} .warning{color:#d97706;font-weight:700} .critical{color:#dc2626;font-weight:700}
-    @media print{body{padding:0.5rem}}
-  </style></head><body>
-  <h1>${title}</h1>
-  <div class="meta">${metaHtml}</div>
-  ${tableHtml}
-  </body></html>`);
-  w.document.close();
-  setTimeout(() => { w.focus(); w.print(); }, 300);
-}
-
 // ── Main component ─────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 20;
@@ -190,6 +169,8 @@ export default function StudentAttendanceReport() {
   const [page, setPage] = useState(1);
   const [exporting, setExporting] = useState(false);
   const tableRef = useRef<HTMLDivElement>(null);
+  const distributionChartRef = useRef<ChartJS<'doughnut'>>(null);
+  const topBottomChartRef = useRef<ChartJS<'bar'>>(null);
 
   // ── Load filter options once ───────────────────────────────────────────────
 
@@ -418,84 +399,78 @@ export default function StudentAttendanceReport() {
 
   // ── Export helpers ─────────────────────────────────────────────────────────
 
-  const exportRows = useMemo(
-    () =>
-      filtered.map((r) => ({
-        Rank: r.rank,
-        'First Name': r.first_name,
-        'Last Name': r.last_name,
-        'NFC / Username': r.username,
-        'Total Sessions': r.total,
-        Present: r.present,
-        Late: r.late,
-        Absent: r.absent,
-        Excused: r.excused,
-        'Attendance %': Math.round(r.pct * 10) / 10,
-        Status: r.status,
-        Trend: r.trend,
-      })),
-    [filtered]
-  );
-
   const stamp = () =>
     reportMeta
-      ? `${reportMeta.courseName.replace(/\s+/g, '_')}_${Date.now()}`
+      ? `student_${reportMeta.courseName.replace(/\s+/g, '_')}_${Date.now()}`
       : `student_report_${Date.now()}`;
 
+  const buildDocument = () => {
+    if (!reportMeta || !kpi) return null;
+    const courseObj = courses.find((c) => c.id === courseId);
+    return buildStudentRosterDocument(
+      {
+        courseName: reportMeta.courseName,
+        classLabel: reportMeta.classLabel,
+        courseCode: courseObj?.course_id,
+        totalSessions: reportMeta.totalSessions,
+        generatedAt: reportMeta.generatedAt,
+        dateFrom,
+        dateTo,
+      },
+      {
+        studentCount: rows.length,
+        avgPct: kpi.avg,
+        excellent: kpi.excellent,
+        warning: kpi.warning,
+        critical: kpi.critical,
+        bestName: `${kpi.best.first_name} ${kpi.best.last_name}`.trim(),
+        bestPct: kpi.best.pct,
+        worstName: `${kpi.worst.first_name} ${kpi.worst.last_name}`.trim(),
+        worstPct: kpi.worst.pct,
+      },
+      rows
+    );
+  };
+
+  const getCharts = () =>
+    collectCharts([
+      { title: 'Attendance distribution by bracket', chart: distributionChartRef.current },
+      { title: 'Top and bottom performers', chart: topBottomChartRef.current },
+    ]);
+
   const doExportCsv = async () => {
+    const doc = buildDocument();
+    if (!doc) return;
     setExporting(true);
-    exportToExcelFriendlyCsv(exportRows, stamp());
+    exportToExcelFriendlyCsv(rosterToFlatCsv(doc), stamp());
     setExporting(false);
   };
 
   const doExportPdf = async () => {
+    const doc = buildDocument();
+    if (!doc) return;
     setExporting(true);
-    const cols = [
-      { header: '#', dataKey: 'Rank' },
-      { header: 'First Name', dataKey: 'First Name' },
-      { header: 'Last Name', dataKey: 'Last Name' },
-      { header: 'Present', dataKey: 'Present' },
-      { header: 'Late', dataKey: 'Late' },
-      { header: 'Absent', dataKey: 'Absent' },
-      { header: 'Excused', dataKey: 'Excused' },
-      { header: 'Att %', dataKey: 'Attendance %' },
-      { header: 'Status', dataKey: 'Status' },
-    ];
-    const pdfRows = exportRows.map((r) => {
-      const o: Record<string, string | number | null | undefined> = {};
-      for (const [k, v] of Object.entries(r)) o[k] = v;
-      return o;
-    });
-    exportToPDF(
-      `Student Attendance — ${reportMeta?.courseName ?? ''} ${reportMeta?.classLabel ?? ''}`,
-      cols,
-      pdfRows,
-      stamp()
-    );
+    exportInstitutionalPDF(doc, stamp(), getCharts());
     setExporting(false);
   };
 
   const doPrint = () => {
-    if (!reportMeta) return;
-    const metaHtml = [
-      `<span>Course: ${reportMeta.courseName}</span>`,
-      `<span>Class: ${reportMeta.classLabel}</span>`,
-      `<span>Sessions: ${reportMeta.totalSessions}</span>`,
-      `<span>Generated: ${reportMeta.generatedAt}</span>`,
-    ].join('');
-    const header = `<tr>${['#','First Name','Last Name','Present','Late','Absent','Excused','Att %','Status','Trend']
-      .map((h) => `<th>${h}</th>`).join('')}</tr>`;
-    const bodyRows = filtered
-      .map(
-        (r) =>
-          `<tr><td>${r.rank}</td><td>${r.first_name}</td><td>${r.last_name}</td><td>${r.present}</td><td>${r.late}</td><td>${r.absent}</td><td>${r.excused}</td><td class="${r.status}">${Math.round(r.pct)}%</td><td class="${r.status}">${r.status}</td><td>${r.trend}</td></tr>`
-      )
-      .join('');
-    openPrint(
-      `Student Attendance Report — ${reportMeta.courseName} ${reportMeta.classLabel}`,
-      metaHtml,
-      `<table><thead>${header}</thead><tbody>${bodyRows}</tbody></table>`
-    );
+    const doc = buildDocument();
+    if (!doc) return;
+    openPrintableReportHtml(doc.title, doc, getCharts());
+  };
+
+  const doExportJson = () => {
+    const doc = buildDocument();
+    if (!doc) return;
+    const payload = { report: doc, charts: getCharts().map((c) => c.title), students: rows };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${stamp()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // ── Chart data ─────────────────────────────────────────────────────────────
@@ -703,34 +678,13 @@ export default function StudentAttendanceReport() {
                 Generated {reportMeta.generatedAt}
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="bg-white/10 border-white/20 text-white hover:bg-white/20"
-                disabled={exporting}
-                onClick={doExportCsv}
-              >
-                <Download size={13} className="mr-1" /> Excel CSV
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="bg-white/10 border-white/20 text-white hover:bg-white/20"
-                disabled={exporting}
-                onClick={doExportPdf}
-              >
-                <FileText size={13} className="mr-1" /> PDF
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="bg-white/10 border-white/20 text-white hover:bg-white/20"
-                onClick={doPrint}
-              >
-                <Printer size={13} className="mr-1" /> Print
-              </Button>
-            </div>
+            <RosterExportBar
+              exporting={exporting}
+              onCsv={doExportCsv}
+              onPdf={doExportPdf}
+              onPrint={doPrint}
+              onJson={doExportJson}
+            />
           </div>
 
           {/* KPI cards */}
@@ -828,7 +782,7 @@ export default function StudentAttendanceReport() {
                   <CardDescription>Students by bracket</CardDescription>
                 </CardHeader>
                 <CardContent className="h-56">
-                  <Doughnut data={distributionChart} options={donutOpts} />
+                  <Doughnut ref={distributionChartRef} data={distributionChart} options={donutOpts} />
                 </CardContent>
               </Card>
             )}
@@ -839,7 +793,7 @@ export default function StudentAttendanceReport() {
                   <CardDescription>Individual attendance percentage</CardDescription>
                 </CardHeader>
                 <CardContent className="h-56">
-                  <Bar data={topBottomChart} options={chartOpts} />
+                  <Bar ref={topBottomChartRef} data={topBottomChart} options={chartOpts} />
                 </CardContent>
               </Card>
             )}

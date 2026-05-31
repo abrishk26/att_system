@@ -1,135 +1,271 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import type { PermissionWithStudent, Session, Course } from '../../api';
-import './Permissions.css';
+import { PageHeader } from '@/components/admin/PageHeader';
+import { PermissionDetailDialog } from '@/components/instructor/permissions/PermissionDetailDialog';
+import { MetricCard } from '@/components/admin/MetricCard';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { CheckCircle, Eye, Loader2, ShieldCheck, XCircle } from 'lucide-react';
 
 interface EnrichedSession extends Session {
   course?: Course;
 }
 
+type StatusFilter = 'all' | 'pending' | 'accepted' | 'rejected';
+
 export default function Permissions() {
   const [sessions, setSessions] = useState<EnrichedSession[]>([]);
-  const [selectedSession, setSelectedSession] = useState('');
+  const [selectedSession, setSelectedSession] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('pending');
   const [permissions, setPermissions] = useState<PermissionWithStudent[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingPerms, setLoadingPerms] = useState(false);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<PermissionWithStudent | null>(null);
 
   useEffect(() => {
-    api.instructorSessions().then(async (data) => {
-      const enriched = await Promise.all(
-        data.map(async (s) => {
-          const course = await api.courseDetails(s.course_id).catch(() => undefined);
-          return { ...s, course };
-        })
-      );
-      setSessions(enriched);
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    api
+      .allSessions()
+      .then(async (data) => {
+        const enriched = await Promise.all(
+          data.map(async (s) => {
+            const course = await api.courseDetails(s.course_id).catch(() => undefined);
+            return { ...s, course };
+          })
+        );
+        setSessions(enriched);
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-
-    const run = async () => {
-      if (!selectedSession) {
-        Promise.resolve().then(() => {
-          if (cancelled) return;
-          setPermissions([]);
-          setLoadingPerms(false);
-        });
-        return;
-      }
-
-      setLoadingPerms(true);
+    setLoadingPerms(true);
+    (async () => {
       try {
-        const res = await api.permissionsBySession(selectedSession);
+        let res: PermissionWithStudent[];
+        if (selectedSession === 'all') {
+          res = await api.allPermissions(statusFilter === 'all' ? undefined : statusFilter);
+        } else {
+          res = await api.permissionsBySession(selectedSession);
+          if (statusFilter !== 'all') res = res.filter((p) => p.status === statusFilter);
+        }
         if (!cancelled) setPermissions(res);
       } catch {
         if (!cancelled) setPermissions([]);
       } finally {
         if (!cancelled) setLoadingPerms(false);
       }
-    };
-
-    run();
-
+    })();
     return () => {
       cancelled = true;
     };
-  }, [selectedSession]);
+  }, [selectedSession, statusFilter]);
+
+  const pendingCount = useMemo(
+    () => permissions.filter((p) => p.status === 'pending').length,
+    [permissions]
+  );
 
   const handleUpdate = async (id: string, status: string) => {
+    setUpdatingId(id);
     try {
       await api.updatePermission(id, status);
-      setPermissions(prev => prev.map(p => p.id === id ? { ...p, status } : p));
-    } catch (e) {
-      console.error(e);
+      setPermissions((prev) => prev.map((p) => (p.id === id ? { ...p, status } : p)));
+    } finally {
+      setUpdatingId(null);
     }
   };
 
-  if (loading) return <div className="loading">Loading...</div>;
+  const statusBadge = (status: string) => {
+    if (status === 'accepted')
+      return (
+        <Badge className="bg-emerald-600 hover:bg-emerald-600">
+          <CheckCircle className="mr-1 h-3 w-3" />
+          Accepted
+        </Badge>
+      );
+    if (status === 'rejected')
+      return (
+        <Badge variant="destructive">
+          <XCircle className="mr-1 h-3 w-3" />
+          Rejected
+        </Badge>
+      );
+    return <Badge variant="secondary">Pending</Badge>;
+  };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center gap-2 text-muted-foreground">
+        <Loader2 className="h-6 w-6 animate-spin" />
+        Loading…
+      </div>
+    );
+  }
 
   return (
-    <div className="permissions-page">
-      <div className="page-header">
-        <div>
-          <h2>Permission Requests</h2>
-          <p className="page-sub">Review and manage student permission requests</p>
-        </div>
+    <div className="mx-auto max-w-[1400px] space-y-6 pb-10">
+      <PageHeader
+        title="Permission inbox"
+        description="Review and approve student absence requests across all department sessions."
+      />
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <MetricCard
+          title="Showing"
+          value={permissions.length}
+          sub="Matching current filters"
+          icon={<ShieldCheck className="h-5 w-5" />}
+        />
+        <MetricCard
+          title="Pending"
+          value={pendingCount}
+          sub="Need approve or reject"
+          icon={<ShieldCheck className="h-5 w-5" />}
+        />
+        <MetricCard
+          title="Sessions"
+          value={sessions.length}
+          sub="With permission data"
+          icon={<ShieldCheck className="h-5 w-5" />}
+        />
       </div>
 
-      <div className="session-picker">
-        <label>Select Session</label>
-        <select value={selectedSession} onChange={e => setSelectedSession(e.target.value)} className="assignment-select">
-          <option value="">Choose a session...</option>
-          {sessions.map(s => (
-            <option key={s.id} value={s.id}>
-              {s.course?.name ?? 'Unknown'} · {s.status}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {loadingPerms && <div className="loading">Loading permissions...</div>}
-
-      {!loadingPerms && selectedSession && (
-        <div className="perms-table-wrap">
-          <table className="sessions-table">
-            <thead>
-              <tr>
-                <th>Student</th>
-                <th>Description</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {permissions.map(p => (
-                <tr key={p.id}>
-                  <td className="cell-main">{p.student_name}</td>
-                  <td style={{ color: '#9ca3af', maxWidth: 300 }}>{p.description}</td>
-                  <td><span className={`badge badge-perm-${p.status}`}>{p.status}</span></td>
-                  <td>
-                    {p.status === 'pending' && (
-                      <div className="action-btns">
-                        <button className="btn-sm btn-green" onClick={() => handleUpdate(p.id, 'accepted')}>Approve</button>
-                        <button className="btn-sm btn-red" onClick={() => handleUpdate(p.id, 'rejected')}>Reject</button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
+      <Card className="border-border shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-base">Filters</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-3">
+          <Select value={selectedSession} onValueChange={setSelectedSession}>
+            <SelectTrigger className="w-full sm:w-[280px]">
+              <SelectValue placeholder="Session" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All sessions (inbox)</SelectItem>
+              {sessions.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.course?.name ?? 'Course'} · {s.status}
+                </SelectItem>
               ))}
-              {permissions.length === 0 && (
-                <tr><td colSpan={4} className="empty-state">No permission requests for this session.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
+            <SelectTrigger className="w-[160px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="accepted">Accepted</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
+            </SelectContent>
+          </Select>
+        </CardContent>
+      </Card>
 
-      {!selectedSession && (
-        <div className="empty-prompt">Select a session to view permission requests.</div>
-      )}
+      <Card className="border-border shadow-sm overflow-hidden">
+        <CardContent className="p-0">
+          {loadingPerms ? (
+            <div className="flex h-48 items-center justify-center text-muted-foreground">
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              Loading requests…
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6">Student</TableHead>
+                  <TableHead>Session</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right pr-6">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {permissions.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell className="pl-6 font-medium">{p.student_name}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground font-mono">
+                      {p.session_id.slice(0, 8)}
+                    </TableCell>
+                    <TableCell className="max-w-[240px] truncate text-sm text-muted-foreground">
+                      {p.description}
+                    </TableCell>
+                    <TableCell>{statusBadge(p.status)}</TableCell>
+                    <TableCell className="text-right pr-6">
+                      <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => setViewing(p)}>
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        {p.status === 'pending' && (
+                          <>
+                            <Button
+                              size="sm"
+                              disabled={updatingId === p.id}
+                              onClick={() => handleUpdate(p.id, 'accepted')}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={updatingId === p.id}
+                              onClick={() => handleUpdate(p.id, 'rejected')}
+                            >
+                              Reject
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {permissions.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-32 text-center text-muted-foreground">
+                      No permission requests match your filters.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <PermissionDetailDialog
+        permission={viewing}
+        open={!!viewing}
+        onOpenChange={(o) => !o && setViewing(null)}
+        updating={!!viewing && updatingId === viewing.id}
+        onApprove={(id) => {
+          handleUpdate(id, 'accepted');
+          setViewing((prev) => (prev?.id === id ? { ...prev, status: 'accepted' } : prev));
+        }}
+        onReject={(id) => {
+          handleUpdate(id, 'rejected');
+          setViewing((prev) => (prev?.id === id ? { ...prev, status: 'rejected' } : prev));
+        }}
+      />
     </div>
   );
 }

@@ -22,6 +22,13 @@ export interface ReportDocument {
   tables: ReportDocumentTable[];
 }
 
+export type ReportChartImage = {
+  title: string;
+  dataUrl: string;
+  /** PDF image height in mm (default 52) */
+  heightMm?: number;
+};
+
 export const exportToCSV = (data: any[], filename: string) => {
     const csv = Papa.unparse(data);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -49,7 +56,24 @@ export const exportToExcelFriendlyCsv = (data: Record<string, unknown>[], filena
   URL.revokeObjectURL(url);
 };
 
-export function openPrintableReportHtml(title: string, doc: ReportDocument) {
+function chartsHtml(charts: ReportChartImage[] | undefined) {
+  if (!charts?.length) return '';
+  return charts
+    .map(
+      (ch) => `
+    <div class="print-chart-section">
+      <h3>${escapeHtml(ch.title)}</h3>
+      <img src="${ch.dataUrl}" alt="${escapeHtml(ch.title)}" class="print-chart-img" />
+    </div>`
+    )
+    .join('');
+}
+
+export function openPrintableReportHtml(
+  title: string,
+  doc: ReportDocument,
+  charts?: ReportChartImage[]
+) {
   const w = window.open('', '_blank');
   if (!w) return;
   
@@ -114,6 +138,8 @@ export function openPrintableReportHtml(title: string, doc: ReportDocument) {
     th,td{border:1px solid #e2e8f0;padding:8px 10px;text-align:left;}
     th{background:#f8fafc;font-weight:600;color:#1e293b;}
     tr:nth-child(even) td{background:#fafbfc;}
+    .print-chart-section{margin:2rem 0;page-break-inside:avoid;}
+    .print-chart-img{max-width:100%;height:auto;border:1px solid #e2e8f0;border-radius:8px;}
     @media print { 
       body { padding: 1rem; }
       .header-bar { border-bottom-color: #000; }
@@ -136,6 +162,7 @@ export function openPrintableReportHtml(title: string, doc: ReportDocument) {
   </div>
   
   ${kpisHtml}
+  ${chartsHtml(charts)}
   ${tablesHtml}
   </body></html>`);
   w.document.close();
@@ -202,7 +229,39 @@ export const exportToPDF = (
     doc.save(`${filename}.pdf`);
 };
 
-export const exportInstitutionalPDF = (doc: ReportDocument, filename: string) => {
+function drawChartsInPdf(
+  pdf: jsPDF,
+  charts: ReportChartImage[],
+  startY: number
+): number {
+  let currentY = startY;
+  const pageHeight = 285;
+
+  for (const ch of charts) {
+    const imgH = ch.heightMm ?? 52;
+    if (currentY + imgH + 16 > pageHeight) {
+      pdf.addPage();
+      currentY = 20;
+    }
+
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(11);
+    pdf.setTextColor(30, 58, 138);
+    pdf.text(ch.title.toUpperCase(), 14, currentY);
+    currentY += 5;
+
+    pdf.addImage(ch.dataUrl, 'PNG', 14, currentY, 182, imgH);
+    currentY += imgH + 10;
+  }
+
+  return currentY;
+}
+
+export const exportInstitutionalPDF = (
+  doc: ReportDocument,
+  filename: string,
+  charts?: ReportChartImage[]
+) => {
   const pdf = new jsPDF();
   
   // 1. Draw top brand strip
@@ -308,6 +367,10 @@ export const exportInstitutionalPDF = (doc: ReportDocument, filename: string) =>
     }
   }
   
+  if (charts && charts.length > 0) {
+    currentY = drawChartsInPdf(pdf, charts, currentY);
+  }
+
   // 5. Render Tables
   if (doc.tables && doc.tables.length > 0) {
     for (const t of doc.tables) {

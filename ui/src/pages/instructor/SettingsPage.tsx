@@ -23,7 +23,7 @@ export default function SettingsPage() {
                     ].map((item, idx) => (
                         <button
                             key={idx}
-                            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all font-medium ${idx === 0 ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'text-slate-600 hover:bg-white hover:text-primary shadow-sm hover:shadow-md'}`}
+                            className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all font-medium ${idx === 0 ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
                         >
                             <item.icon size={20} />
                             {item.label}

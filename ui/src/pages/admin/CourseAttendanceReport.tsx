@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -15,15 +15,19 @@ import {
 import { Bar, Doughnut, Line } from 'react-chartjs-2';
 import { api } from '../../api';
 import type { AttendanceRecordWithStudent, Course, Class, Session } from '../../api';
-import { exportToPDF, exportToExcelFriendlyCsv } from '../../lib/exportUtils';
+import {
+  exportInstitutionalPDF,
+  exportToExcelFriendlyCsv,
+  openPrintableReportHtml,
+} from '../../lib/exportUtils';
+import { buildCourseRosterDocument, rosterToFlatCsv } from '../../lib/admin/rosterReportDocuments';
+import { collectCharts } from '../../lib/admin/chartCapture';
+import { RosterExportBar } from '../../components/admin/roster/RosterExportBar';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Skeleton } from '../../components/ui/skeleton';
 import {
-  Download,
-  FileText,
-  Printer,
   AlertTriangle,
   CheckCircle,
   TrendingDown,
@@ -111,37 +115,6 @@ function scoreLabel(s: number) {
   return 'At Risk';
 }
 
-function openPrint(title: string, metaHtml: string, bodyHtml: string) {
-  const w = window.open('', '_blank');
-  if (!w) return;
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
-  <title>${title}</title>
-  <style>
-    *{box-sizing:border-box}
-    body{font-family:system-ui,sans-serif;padding:2rem;color:#0f172a;max-width:1100px;margin:0 auto}
-    h1{font-size:1.4rem;margin:0 0 0.25rem;font-weight:800}
-    h2{font-size:1rem;margin:1.5rem 0 0.5rem;font-weight:700}
-    .meta{color:#64748b;font-size:0.8rem;margin-bottom:1.5rem;display:flex;flex-wrap:wrap;gap:0.75rem}
-    .meta span{background:#f1f5f9;padding:2px 8px;border-radius:4px}
-    .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem}
-    .kpi{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:0.75rem}
-    .kpi-val{font-size:1.6rem;font-weight:900;line-height:1}
-    .kpi-lbl{font-size:0.65rem;text-transform:uppercase;letter-spacing:.08em;color:#64748b;margin-top:4px}
-    table{width:100%;border-collapse:collapse;font-size:0.8rem}
-    th{background:#1e293b;color:#fff;padding:7px 10px;text-align:left;font-weight:600;font-size:0.7rem;text-transform:uppercase;letter-spacing:.05em}
-    td{padding:6px 10px;border-bottom:1px solid #e2e8f0}
-    tr:nth-child(even) td{background:#f8fafc}
-    .high{color:#dc2626;font-weight:700} .medium{color:#d97706;font-weight:700} .low{color:#059669;font-weight:700}
-    @media print{body{padding:0.5rem}}
-  </style></head><body>
-  <h1>${title}</h1>
-  <div class="meta">${metaHtml}</div>
-  ${bodyHtml}
-  </body></html>`);
-  w.document.close();
-  setTimeout(() => { w.focus(); w.print(); }, 300);
-}
-
 // ── Skeletons ──────────────────────────────────────────────────────────────────
 
 function ReportSkeleton() {
@@ -176,6 +149,9 @@ export default function CourseAttendanceReport() {
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
   const [riskFilter, setRiskFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
+  const timelineChartRef = useRef<ChartJS<'line'>>(null);
+  const riskChartRef = useRef<ChartJS<'doughnut'>>(null);
+  const topStudentsChartRef = useRef<ChartJS<'bar'>>(null);
 
   // ── Load filter options ────────────────────────────────────────────────────
 
@@ -427,88 +403,83 @@ export default function CourseAttendanceReport() {
 
   // ── Exports ────────────────────────────────────────────────────────────────
 
-  const stamp = () => report
-    ? `${report.courseCode || 'course'}_${Date.now()}`
-    : `course_report_${Date.now()}`;
+  const stamp = () =>
+    report ? `course_${report.courseCode || 'report'}_${Date.now()}` : `course_report_${Date.now()}`;
 
-  const exportStudents = useMemo(
-    () =>
-      (report?.students ?? []).map((s) => ({
-        Name: s.name,
-        Present: s.present,
-        Late: s.late,
-        Absent: s.absent,
-        Excused: s.excused,
-        'Attendance %': Math.round(s.pct * 10) / 10,
-        Risk: s.risk,
-      })),
-    [report]
-  );
+  const buildDocument = () => {
+    if (!report) return null;
+    return buildCourseRosterDocument(
+      {
+        courseName: report.courseName,
+        courseCode: report.courseCode,
+        classLabel: report.classLabel,
+        totalSessions: report.totalSessions,
+        generatedAt: report.generatedAt,
+        dateFrom,
+        dateTo,
+      },
+      {
+        totalEnrolled: report.totalEnrolled,
+        activeStudents: report.activeStudents,
+        overallPct: report.overallPct,
+        avgPct: report.avgPct,
+        belowThreshold: report.belowThreshold,
+        engagementScore: report.engagementScore,
+        bestName: report.best?.name ?? '—',
+        bestPct: report.best?.pct ?? 0,
+        worstName: report.worst?.name ?? '—',
+        worstPct: report.worst?.pct ?? 0,
+        highRisk: report.students.filter((s) => s.risk === 'high').length,
+        mediumRisk: report.students.filter((s) => s.risk === 'medium').length,
+        lowRisk: report.students.filter((s) => s.risk === 'low').length,
+        students: report.students,
+        timeline: report.timeline,
+      }
+    );
+  };
+
+  const getCharts = () =>
+    collectCharts([
+      { title: 'Attendance trend by session', chart: timelineChartRef.current },
+      { title: 'Student risk distribution', chart: riskChartRef.current },
+      { title: 'Top 10 performers', chart: topStudentsChartRef.current },
+    ]);
 
   const doExportCsv = () => {
+    const doc = buildDocument();
+    if (!doc) return;
     setExporting(true);
-    exportToExcelFriendlyCsv(exportStudents, stamp());
+    exportToExcelFriendlyCsv(rosterToFlatCsv(doc), stamp());
     setExporting(false);
   };
 
   const doExportPdf = () => {
-    if (!report) return;
+    const doc = buildDocument();
+    if (!doc) return;
     setExporting(true);
-    const cols = [
-      { header: 'Student', dataKey: 'Name' },
-      { header: 'Present', dataKey: 'Present' },
-      { header: 'Late', dataKey: 'Late' },
-      { header: 'Absent', dataKey: 'Absent' },
-      { header: 'Excused', dataKey: 'Excused' },
-      { header: 'Att %', dataKey: 'Attendance %' },
-      { header: 'Risk', dataKey: 'Risk' },
-    ];
-    const rows = exportStudents.map((r) => {
-      const o: Record<string, string | number | null | undefined> = {};
-      for (const [k, v] of Object.entries(r)) o[k] = v;
-      return o;
-    });
-    exportToPDF(
-      `Course Attendance — ${report.courseName} ${report.classLabel}`,
-      cols,
-      rows,
-      stamp()
-    );
+    exportInstitutionalPDF(doc, stamp(), getCharts());
     setExporting(false);
   };
 
   const doPrint = () => {
-    if (!report) return;
-    const metaHtml = [
-      `<span>Course: ${report.courseName}</span>`,
-      `<span>Code: ${report.courseCode}</span>`,
-      `<span>Class: ${report.classLabel}</span>`,
-      `<span>Sessions: ${report.totalSessions}</span>`,
-      `<span>Enrollment: ${report.totalEnrolled}</span>`,
-      `<span>Overall attendance: ${Math.round(report.overallPct)}%</span>`,
-      `<span>Engagement score: ${report.engagementScore}/100</span>`,
-      `<span>Generated: ${report.generatedAt}</span>`,
-    ].join('');
+    const doc = buildDocument();
+    if (!doc) return;
+    openPrintableReportHtml(doc.title, doc, getCharts());
+  };
 
-    const kpiHtml = `<div class="kpis">
-      <div class="kpi"><div class="kpi-val">${Math.round(report.overallPct)}%</div><div class="kpi-lbl">Overall attendance</div></div>
-      <div class="kpi"><div class="kpi-val">${report.totalEnrolled}</div><div class="kpi-lbl">Enrolled</div></div>
-      <div class="kpi"><div class="kpi-val">${report.belowThreshold}</div><div class="kpi-lbl">Below 70%</div></div>
-      <div class="kpi"><div class="kpi-val">${report.engagementScore}</div><div class="kpi-lbl">Engagement score</div></div>
-    </div>`;
-
-    const header = `<tr>${['Student','Present','Late','Absent','Excused','Att %','Risk']
-      .map((h) => `<th>${h}</th>`).join('')}</tr>`;
-    const bodyRows = report.students.map(
-      (s) =>
-        `<tr><td>${s.name}</td><td>${s.present}</td><td>${s.late}</td><td>${s.absent}</td><td>${s.excused}</td><td>${Math.round(s.pct)}%</td><td class="${s.risk}">${s.risk}</td></tr>`
-    ).join('');
-
-    openPrint(
-      `Course Attendance Report — ${report.courseName} ${report.classLabel}`,
-      metaHtml,
-      `${kpiHtml}<h2>Student roster</h2><table><thead>${header}</thead><tbody>${bodyRows}</tbody></table>`
+  const doExportJson = () => {
+    const doc = buildDocument();
+    if (!report || !doc) return;
+    const blob = new Blob(
+      [JSON.stringify({ report: doc, reportData: report, charts: getCharts().map((c) => c.title) }, null, 2)],
+      { type: 'application/json' }
     );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${stamp()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -623,23 +594,13 @@ export default function CourseAttendanceReport() {
                 Generated {report.generatedAt}
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline"
-                className="bg-white/10 border-white/20 text-white hover:bg-white/20"
-                disabled={exporting} onClick={doExportCsv}>
-                <Download size={13} className="mr-1" /> Excel CSV
-              </Button>
-              <Button size="sm" variant="outline"
-                className="bg-white/10 border-white/20 text-white hover:bg-white/20"
-                disabled={exporting} onClick={doExportPdf}>
-                <FileText size={13} className="mr-1" /> PDF
-              </Button>
-              <Button size="sm" variant="outline"
-                className="bg-white/10 border-white/20 text-white hover:bg-white/20"
-                onClick={doPrint}>
-                <Printer size={13} className="mr-1" /> Print
-              </Button>
-            </div>
+            <RosterExportBar
+              exporting={exporting}
+              onCsv={doExportCsv}
+              onPdf={doExportPdf}
+              onPrint={doPrint}
+              onJson={doExportJson}
+            />
           </div>
 
           {/* KPI row */}
@@ -749,7 +710,7 @@ export default function CourseAttendanceReport() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="h-64">
-                  <Line data={timelineChart} options={baseChartOpts} />
+                  <Line ref={timelineChartRef} data={timelineChart} options={baseChartOpts} />
                 </CardContent>
               </Card>
             )}
@@ -760,7 +721,7 @@ export default function CourseAttendanceReport() {
                   <CardDescription>Students grouped by attendance risk level</CardDescription>
                 </CardHeader>
                 <CardContent className="h-64">
-                  <Doughnut data={riskChart} options={donutOpts} />
+                  <Doughnut ref={riskChartRef} data={riskChart} options={donutOpts} />
                 </CardContent>
               </Card>
             )}
@@ -773,7 +734,7 @@ export default function CourseAttendanceReport() {
                 <CardDescription>Colour indicates risk level</CardDescription>
               </CardHeader>
               <CardContent className="h-64">
-                <Bar data={topStudentsChart} options={baseChartOpts} />
+                <Bar ref={topStudentsChartRef} data={topStudentsChart} options={baseChartOpts} />
               </CardContent>
             </Card>
           )}

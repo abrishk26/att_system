@@ -1,341 +1,386 @@
-import { useEffect, useState, useCallback } from 'react';
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  BarChart, Bar, PieChart, Pie, Cell,
-} from 'recharts';
-import { fetchDashboardData, api } from '../../api';
-import type { DashboardStats, AttendanceTrend, AttendanceDistribution, CoursePerformance, Session } from '../../api';
-import { useAuth } from '../../AuthContext';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { Badge } from "../../components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../components/ui/card";
-import { BookOpen, Calendar, Clock, ArrowRight, Users, CheckCircle, GraduationCap, BarChart3 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import {
+  Activity,
+  AlertTriangle,
+  Calendar,
+  ClipboardList,
+  RefreshCw,
+  ShieldCheck,
+  Users,
+} from 'lucide-react';
+import { api } from '@/api';
+import type { PermissionWithStudent, Session, UniversityIntelligence } from '@/api';
+import { PageHeader } from '@/components/admin/PageHeader';
+import { MetricCard } from '@/components/admin/MetricCard';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  buildCourseNameMap,
+  buildInstructorNameMap,
+  formatStatus,
+  pct,
+  sessionCounts,
+} from '@/lib/admin/metrics';
+import {
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 
-const PIE_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444'];
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const pctFormatter = (v: any) => `${v ?? 0}%`;
+type LiveSession = Session & { courseLabel: string; instructorLabel: string };
 
 export default function Dashboard() {
-  const { user } = useAuth();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [trends, setTrends] = useState<AttendanceTrend[]>([]);
-  const [distribution, setDistribution] = useState<AttendanceDistribution | null>(null);
-  const [performance, setPerformance] = useState<CoursePerformance[]>([]);
-  const [recentSessions, setRecentSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [intel, setIntel] = useState<UniversityIntelligence | null>(null);
+  const [pendingPermissions, setPendingPermissions] = useState<PermissionWithStudent[]>([]);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    if (!user) return;
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    else setRefreshing(true);
+    setError('');
     try {
-      setError('');
-      const data = await fetchDashboardData(user);
-      setStats(data.stats);
-      setTrends(data.trends);
-      setDistribution(data.distribution);
-      setPerformance(data.performance);
-      
-      const sessions = await api.allSessions();
-      setRecentSessions(sessions.slice(0, 5));
+      const [sess, pending, uni] = await Promise.all([
+        api.allSessions(),
+        api.allPermissions('pending').catch(() => [] as PermissionWithStudent[]),
+        api.universityAnalytics(),
+      ]);
+      setSessions(sess);
+      setPendingPermissions(pending);
+      setIntel(uni);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load dashboard');
+      setError(e instanceof Error ? e.message : 'Could not load dashboard');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [user]);
+  }, []);
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 30_000);
-    return () => clearInterval(interval);
+    const t = setInterval(() => load(true), 60_000);
+    return () => clearInterval(t);
   }, [load]);
 
-  const pieData = distribution
-    ? [
-      { name: 'Excellent', value: distribution.excellent },
-      { name: 'Good', value: distribution.good },
-      { name: 'Fair', value: distribution.fair },
-      { name: 'Poor', value: distribution.poor },
-    ].filter(d => d.value > 0)
-    : [];
+  const courseNames = useMemo(() => buildCourseNameMap(intel), [intel]);
+  const instructorNames = useMemo(() => buildInstructorNameMap(intel), [intel]);
+
+  const counts = useMemo(() => sessionCounts(sessions), [sessions]);
+
+  const liveSessions: LiveSession[] = useMemo(() => {
+    return sessions
+      .filter((s) => s.status === 'active' || s.status === 'incoming')
+      .sort((a, b) => {
+        const p = (x: Session) => (x.status === 'active' ? 0 : 1);
+        return p(a) - p(b) || new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      })
+      .slice(0, 12)
+      .map((s) => ({
+        ...s,
+        courseLabel: courseNames.get(s.course_id) ?? s.course_id.slice(0, 8),
+        instructorLabel: instructorNames.get(s.instructor_id) ?? s.instructor_id.slice(0, 8),
+      }));
+  }, [sessions, courseNames, instructorNames]);
+
+  const recentFinished = useMemo(() => {
+    return sessions
+      .filter((s) => s.status === 'completed' || s.status === 'finished')
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, 8)
+      .map((s) => ({
+        ...s,
+        courseLabel: courseNames.get(s.course_id) ?? s.course_id.slice(0, 8),
+      }));
+  }, [sessions, courseNames]);
+
+  const weekTrend = useMemo(() => {
+    if (!intel) return [];
+    return intel.daily_timeline.slice(-14).map((d) => ({
+      date: d.date.slice(5),
+      rate: Math.round(d.attendance_rate * 10) / 10,
+    }));
+  }, [intel]);
+
+  const highAlerts = useMemo(
+    () => intel?.anomalies.filter((a) => a.severity === 'high').slice(0, 5) ?? [],
+    [intel]
+  );
+
+  const atRiskCount = intel?.students_at_risk.filter((s) => s.predicted_low).length ?? 0;
+
+  const todayLabel = new Date().toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  });
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-muted-foreground">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-        <span className="text-sm font-medium">Loading dashboard...</span>
+      <div className="mx-auto max-w-7xl space-y-6">
+        <Skeleton className="h-20 w-full" />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <Skeleton key={i} className="h-28 rounded-xl" />
+          ))}
+        </div>
+        <Skeleton className="h-72 rounded-xl" />
       </div>
     );
   }
 
-  if (error) {
+  if (error && !intel) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-destructive">
-        <span className="text-sm font-medium">⚠ {error}</span>
-        <button onClick={load} className="px-4 py-2 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 font-semibold text-sm transition-colors">Retry</button>
+      <div className="mx-auto max-w-7xl py-16 text-center">
+        <p className="text-destructive">{error}</p>
+        <Button className="mt-4" onClick={() => load()}>
+          Retry
+        </Button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 pb-10 max-w-[1600px] mx-auto animate-fade-in">
-      {/* Title Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border pb-6">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight text-foreground">Dashboard</h2>
-          <p className="text-sm text-muted-foreground">Real-time campus-wide attendance stats and analytics.</p>
-        </div>
+    <div className="mx-auto max-w-7xl space-y-8">
+      <PageHeader
+        title="Dashboard"
+        description={`${todayLabel} — what needs your attention right now across sessions, permissions, and attendance.`}
+        actions={
+          <Button variant="outline" size="sm" onClick={() => load(true)} disabled={refreshing}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        }
+      />
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <MetricCard
+          title="Sessions in progress"
+          value={counts.active}
+          sub="Being marked right now"
+          icon={<Activity className="h-5 w-5" />}
+          href="/admin/schedule"
+        />
+        <MetricCard
+          title="Scheduled"
+          value={counts.scheduled}
+          sub="Not started yet"
+          icon={<Calendar className="h-5 w-5" />}
+          href="/admin/sessions"
+        />
+        <MetricCard
+          title="Pending permissions"
+          value={pendingPermissions.length}
+          sub="Student absence requests"
+          icon={<ShieldCheck className="h-5 w-5" />}
+          href="/admin/permissions"
+        />
+        <MetricCard
+          title="Department attendance"
+          value={intel ? pct(intel.kpi.overall_attendance_rate) : '—'}
+          sub="Present + late ÷ all marks (all time)"
+          icon={<Users className="h-5 w-5" />}
+          href="/admin/analytics"
+        />
+        <MetricCard
+          title="Students flagged"
+          value={atRiskCount}
+          sub="Predicted low attendance"
+          icon={<AlertTriangle className="h-5 w-5" />}
+          href="/admin/analytics"
+        />
       </div>
 
-      {/* Stat Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="bg-card text-card-foreground border-border shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total Sessions</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold tracking-tight">{stats?.totalSessions ?? 0}</div>
-            <p className="text-xs text-muted-foreground mt-1">Recorded sessions</p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card text-card-foreground border-border shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Present Today</CardTitle>
-            <CheckCircle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold tracking-tight">{stats?.presentToday ?? 0}</div>
-            <p className="text-xs text-muted-foreground mt-1">Active live student count</p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card text-card-foreground border-border shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Course Completion</CardTitle>
-            <GraduationCap className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold tracking-tight">{stats?.completionRate ?? 0}%</div>
-            <p className="text-xs text-muted-foreground mt-1">Overall completion rate</p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card text-card-foreground border-border shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Avg. Attendance</CardTitle>
-            <BarChart3 className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold tracking-tight">{stats?.avgAttendance ?? 0}%</div>
-            <p className="text-xs text-muted-foreground mt-1">Global average performance</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Course Overview Table Card */}
-        <Card className="bg-card text-card-foreground border-border shadow-sm">
-          <CardHeader className="flex items-center justify-between flex-row space-y-0 pb-4 border-b border-border">
-            <div className="flex items-center gap-2">
-              <div className="p-2 bg-secondary rounded-lg text-secondary-foreground">
-                <BookOpen size={16} />
-              </div>
-              <div>
-                <CardTitle className="text-base font-bold">Course Overview</CardTitle>
-                <CardDescription className="text-xs text-muted-foreground">Subject performance analytics</CardDescription>
-              </div>
+      {pendingPermissions.length > 0 && (
+        <Card className="border-amber-500/30 bg-amber-500/5">
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-medium">
+                {pendingPermissions.length} permission request
+                {pendingPermissions.length !== 1 ? 's' : ''} waiting for approval
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Students submitted absence reasons that instructors or you must review.
+              </p>
             </div>
-            <Link to="/instructor/courses" className="text-xs font-semibold text-primary hover:underline flex items-center gap-1 group">
-              View All <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
-            </Link>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="rounded-md border border-border overflow-hidden bg-background">
-              <Table>
-                <TableHeader className="bg-muted/50">
-                  <TableRow className="hover:bg-transparent border-b border-border">
-                    <TableHead className="font-bold text-muted-foreground text-xs py-3 pl-4">Course</TableHead>
-                    <TableHead className="text-right font-bold text-muted-foreground text-xs py-3 pr-4">Attendance</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {performance.slice(0, 5).map((p, i) => (
-                    <TableRow key={i} className="hover:bg-muted/50 border-b border-border transition-colors last:border-b-0">
-                      <TableCell className="py-3 pl-4">
-                        <div className="flex flex-col">
-                          <span className="font-semibold text-foreground text-sm">{p.course}</span>
-                          <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mt-0.5">Departmental</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right py-3 pr-4">
-                        <span className="font-bold text-primary">{p.attendance}%</span>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <Button size="sm" asChild>
+              <Link to="/admin/permissions">Open permission inbox</Link>
+            </Button>
           </CardContent>
         </Card>
+      )}
 
-        {/* Live Attendances Table Card */}
-        <Card className="bg-card text-card-foreground border-border shadow-sm">
-          <CardHeader className="flex items-center justify-between flex-row space-y-0 pb-4 border-b border-border">
-            <div className="flex items-center gap-2">
-              <div className="p-2 bg-secondary rounded-lg text-secondary-foreground">
-                <Calendar size={16} />
-              </div>
-              <div>
-                <CardTitle className="text-base font-bold">Live Attendances</CardTitle>
-                <CardDescription className="text-xs text-muted-foreground">Recent class session history</CardDescription>
-              </div>
-            </div>
-            <Link to="/admin/sessions" className="text-xs font-semibold text-primary hover:underline flex items-center gap-1 group">
-              Manage <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
-            </Link>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="rounded-md border border-border overflow-hidden bg-background">
-              <Table>
-                <TableHeader className="bg-muted/50">
-                  <TableRow className="hover:bg-transparent border-b border-border">
-                    <TableHead className="font-bold text-muted-foreground text-xs py-3 pl-4">Session ID</TableHead>
-                    <TableHead className="text-center font-bold text-muted-foreground text-xs py-3">Status</TableHead>
-                    <TableHead className="text-right font-bold text-muted-foreground text-xs py-3 pr-4">Time</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {recentSessions.map((s, i) => (
-                    <TableRow key={i} className="hover:bg-muted/50 border-b border-border transition-colors last:border-b-0">
-                      <TableCell className="font-mono text-xs text-muted-foreground py-3 pl-4">
-                        {s.id.substring(0, 8).toUpperCase()}
-                      </TableCell>
-                      <TableCell className="text-center py-3">
-                        <Badge className={s.status === 'active' ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-muted text-muted-foreground border-none shadow-none hover:bg-muted'}>
-                          {s.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right py-3 pr-4">
-                        <div className="flex items-center justify-end gap-1 text-muted-foreground">
-                          <Clock size={12} />
-                          <span className="text-xs font-medium">Recent</span>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Line Chart */}
-      <Card className="bg-card text-card-foreground border-border shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-lg font-bold">Department-Wide Attendance Trends</CardTitle>
-          <CardDescription className="text-xs text-muted-foreground">Weekly attendance rate across all classes</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trends} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis dataKey="day" stroke="var(--muted-foreground)" tick={{ fontSize: 11, fill: 'var(--foreground)' }} />
-                <YAxis stroke="var(--muted-foreground)" tick={{ fontSize: 12, fill: 'var(--foreground)' }} domain={[0, 100]} unit="%" />
-                <Tooltip
-                  contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13, color: 'var(--foreground)' }}
-                  formatter={pctFormatter}
-                />
-                <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10, color: 'var(--foreground)' }} />
-                <Line
-                  type="monotone"
-                  dataKey="actual"
-                  stroke="#3b82f6"
-                  strokeWidth={3}
-                  dot={{ r: 4, fill: '#3b82f6', strokeWidth: 2, stroke: '#fff' }}
-                  name="Actual Attendance (%)"
-                />
-                <Line
-                  type="monotone"
-                  dataKey="target"
-                  stroke="#10b981"
-                  strokeWidth={3}
-                  strokeDasharray="5 5"
-                  dot={false}
-                  name="Target (%)"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Pie + Bar Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="bg-card text-card-foreground border-border shadow-sm">
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="text-base font-bold">Attendance Distribution</CardTitle>
-            <CardDescription className="text-xs text-muted-foreground">Student attendance rate breakdown</CardDescription>
+            <CardTitle>Live & upcoming sessions</CardTitle>
+            <CardDescription>
+              Sessions currently active or scheduled. Open the schedule for full filters.
+            </CardDescription>
           </CardHeader>
-          <CardContent>
-            {pieData.length > 0 ? (
-              <div className="h-[220px] w-full flex items-center justify-center">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={80}
-                      dataKey="value"
-                      label={({ percent }) => `${((percent ?? 0) * 100).toFixed(0)}%`}
-                      labelLine={false}
-                    >
-                      {pieData.map((_, i) => (
-                        <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--foreground)' }} />
-                  </PieChart>
-                </ResponsiveContainer>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6">Course</TableHead>
+                  <TableHead>Instructor</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="pr-6 text-right">Started</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {liveSessions.map((s) => (
+                  <TableRow key={s.id}>
+                    <TableCell className="pl-6 font-medium">{s.courseLabel}</TableCell>
+                    <TableCell className="text-muted-foreground">{s.instructorLabel}</TableCell>
+                    <TableCell>
+                      <Badge variant={s.status === 'active' ? 'default' : 'secondary'}>
+                        {formatStatus(s.status)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="pr-6 text-right text-xs text-muted-foreground">
+                      {new Date(s.created_at).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {liveSessions.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
+                      No active or scheduled sessions at the moment.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Attention required</CardTitle>
+            <CardDescription>Issues surfaced by the attendance system</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {highAlerts.length === 0 && atRiskCount === 0 && (
+              <p className="text-sm text-muted-foreground">No high-priority alerts right now.</p>
+            )}
+            {atRiskCount > 0 && (
+              <div className="rounded-lg border border-border p-3 text-sm">
+                <p className="font-medium">{atRiskCount} students flagged at-risk</p>
+                <p className="mt-1 text-muted-foreground">
+                  Based on low attendance rate, absence streaks, or inconsistent marks.
+                </p>
+                <Button variant="link" className="mt-2 h-auto p-0" asChild>
+                  <Link to="/admin/analytics">View in analytics</Link>
+                </Button>
               </div>
+            )}
+            {highAlerts.map((a, i) => (
+              <div key={i} className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                <p className="font-medium">{a.kind}</p>
+                <p className="mt-1 text-muted-foreground">{a.message}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Attendance last 14 days</CardTitle>
+            <CardDescription>
+              Daily rate from completed sessions. Detailed breakdowns live under Analytics.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="h-[220px]">
+            {weekTrend.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={weekTrend}>
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                  <YAxis domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v) => [`${v}%`, 'Attendance']} />
+                  <Line
+                    type="monotone"
+                    dataKey="rate"
+                    stroke="hsl(var(--primary))"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
             ) : (
-              <div className="flex items-center justify-center h-[220px] text-xs text-muted-foreground">No completed sessions yet</div>
+              <p className="text-sm text-muted-foreground">Not enough session history yet.</p>
             )}
           </CardContent>
         </Card>
 
-        <Card className="bg-card text-card-foreground border-border shadow-sm">
+        <Card>
           <CardHeader>
-            <CardTitle className="text-base font-bold">Performance Analytics</CardTitle>
-            <CardDescription className="text-xs text-muted-foreground">Attendance vs. participation by course</CardDescription>
+            <CardTitle>Recently completed</CardTitle>
+            <CardDescription>Last finished sessions in the department</CardDescription>
           </CardHeader>
-          <CardContent>
-            {performance.length > 0 ? (
-              <div className="h-[220px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={performance} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                    <XAxis dataKey="course" stroke="var(--muted-foreground)" tick={{ fontSize: 11, fill: 'var(--foreground)' }} />
-                    <YAxis stroke="var(--muted-foreground)" tick={{ fontSize: 12, fill: 'var(--foreground)' }} domain={[0, 100]} unit="%" />
-                    <Tooltip
-                      contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--foreground)' }}
-                      formatter={pctFormatter}
-                    />
-                    <Bar dataKey="attendance" fill="#8b5cf6" name="Attendance %" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-[220px] text-xs text-muted-foreground">No course performance data yet</div>
-            )}
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6">Course</TableHead>
+                  <TableHead className="pr-6 text-right">Ended</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {recentFinished.map((s) => (
+                  <TableRow key={s.id}>
+                    <TableCell className="pl-6 font-medium">{s.courseLabel}</TableCell>
+                    <TableCell className="pr-6 text-right text-xs text-muted-foreground">
+                      {new Date(s.created_at).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {recentFinished.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={2} className="h-20 text-center text-muted-foreground">
+                      No completed sessions yet.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Button variant="outline" className="h-auto justify-start py-4" asChild>
+          <Link to="/admin/sessions">
+            <ClipboardList className="mr-2 h-4 w-4 shrink-0" />
+            All sessions ({counts.total})
+          </Link>
+        </Button>
+        <Button variant="outline" className="h-auto justify-start py-4" asChild>
+          <Link to="/admin/staff">Staff performance</Link>
+        </Button>
+        <Button variant="outline" className="h-auto justify-start py-4" asChild>
+          <Link to="/admin/reports">Export reports</Link>
+        </Button>
+        <Button variant="outline" className="h-auto justify-start py-4" asChild>
+          <Link to="/admin/analytics">Full analytics</Link>
+        </Button>
       </div>
     </div>
   );

@@ -13,9 +13,10 @@ use uuid::Uuid;
 use crate::types::{AppState, ErrorResponse};
 
 use compute::{
-    anomalies, apply_time_filter, build_kpi, by_day_of_week, by_hour, cohort_by_class_year,
-    course_rows, daily_timeline, instructor_rows, section_rows, session_heatmap,
-    status_distribution as status_dist_fn, student_risk_rows, tap_audit,
+    anomalies, apply_time_filter, batch_section_course_rows, batch_section_rows, build_kpi,
+    by_day_of_week, by_hour, cohort_by_class_year, course_rows, daily_timeline, instructor_rows,
+    section_rows, session_heatmap, status_distribution as status_dist_fn, student_risk_rows,
+    tap_audit,
 };
 use enrich::EnrichCache;
 use snapshot::load_snapshot;
@@ -140,15 +141,61 @@ pub async fn university_intelligence(
         }
     }
 
-    let mut class_years = std::collections::HashMap::new();
+    let mut class_meta_map: std::collections::HashMap<uuid::Uuid, (i32, i32)> =
+        std::collections::HashMap::new();
     for s in sessions {
-        if !class_years.contains_key(&s.class_id) {
-            if let Ok(Some(y)) = cache.class_year(state, s.class_id).await {
-                class_years.insert(s.class_id, y);
-            }
+        if class_meta_map.contains_key(&s.class_id) {
+            continue;
+        }
+        if let Ok(Some(cl)) = cache.ensure_class(state, s.class_id).await {
+            class_meta_map.insert(s.class_id, (cl.year, cl.section));
         }
     }
-    let cohort = cohort_by_class_year(sessions, records, |cid| class_years.get(&cid).copied());
+    let class_meta = |cid: uuid::Uuid| class_meta_map.get(&cid).copied();
+    let cohort = cohort_by_class_year(sessions, records, |cid| class_meta(cid).map(|(y, _)| y));
+
+    let batch_course_raw = batch_section_course_rows(sessions, records, class_meta);
+    let mut batch_section_courses = Vec::new();
+    for (y, sec, cid, sf, rec_n, att, punct) in &batch_course_raw {
+        let (code, name) = cache.course_row(state, *cid).await?;
+        batch_section_courses.push(dto::BatchSectionCourseRow {
+            class_year: *y,
+            section: *sec,
+            course_id: *cid,
+            course_code: code,
+            course_name: name,
+            sessions_finished: *sf,
+            records: *rec_n,
+            attendance_rate: *att,
+            punctuality_index: *punct,
+        });
+    }
+
+    let mut batch_sections = Vec::new();
+    for (y, sec, sf, rec_n, cc, att, punct) in batch_section_rows(sessions, records, class_meta) {
+        batch_sections.push(dto::BatchSectionRow {
+            class_year: y,
+            section: sec,
+            sessions_finished: sf,
+            records: rec_n,
+            course_count: cc,
+            attendance_rate: att,
+            punctuality_index: punct,
+        });
+    }
+
+    let mut courses_by_batch = Vec::new();
+    for row in &batch_section_courses {
+        courses_by_batch.push(dto::CourseByBatchRow {
+            course_id: row.course_id,
+            course_code: row.course_code.clone(),
+            course_name: row.course_name.clone(),
+            class_year: row.class_year,
+            section: row.section,
+            sessions_finished: row.sessions_finished,
+            attendance_rate: row.attendance_rate,
+        });
+    }
 
     Ok(UniversityIntelligence {
         meta: AnalyticsMeta {
@@ -169,7 +216,126 @@ pub async fn university_intelligence(
         session_heatmap: hm,
         tap_audit,
         cohort_by_class_year: cohort,
+        batch_sections,
+        batch_section_courses,
+        courses_by_batch,
     })
+}
+
+fn batch_matches_filter(
+    class_year: i32,
+    section: i32,
+    filter_year: Option<i32>,
+    filter_section: Option<i32>,
+) -> bool {
+    if let Some(y) = filter_year {
+        if class_year != y {
+            return false;
+        }
+    }
+    if let Some(s) = filter_section {
+        if section != s {
+            return false;
+        }
+    }
+    true
+}
+
+fn push_batch_report_tables(
+    tables: &mut Vec<dto::ReportTable>,
+    intel: &UniversityIntelligence,
+    filter_year: Option<i32>,
+    filter_section: Option<i32>,
+) {
+    let section_rows: Vec<_> = intel
+        .batch_sections
+        .iter()
+        .filter(|r| batch_matches_filter(r.class_year, r.section, filter_year, filter_section))
+        .collect();
+
+    tables.push(dto::ReportTable {
+        title: "Batch year & section summary".into(),
+        columns: vec![
+            "Batch year".into(),
+            "Section".into(),
+            "Courses".into(),
+            "Finished sessions".into(),
+            "Attendance marks".into(),
+            "Attendance %".into(),
+            "Punctuality %".into(),
+        ],
+        rows: section_rows
+            .iter()
+            .map(|r| {
+                vec![
+                    r.class_year.to_string(),
+                    r.section.to_string(),
+                    r.course_count.to_string(),
+                    r.sessions_finished.to_string(),
+                    r.records.to_string(),
+                    format!("{:.1}", r.attendance_rate),
+                    format!("{:.1}", r.punctuality_index),
+                ]
+            })
+            .collect(),
+    });
+
+    let course_rows: Vec<_> = intel
+        .batch_section_courses
+        .iter()
+        .filter(|r| batch_matches_filter(r.class_year, r.section, filter_year, filter_section))
+        .take(120)
+        .collect();
+
+    tables.push(dto::ReportTable {
+        title: "Courses within each batch & section".into(),
+        columns: vec![
+            "Batch year".into(),
+            "Section".into(),
+            "Course".into(),
+            "Code".into(),
+            "Sessions".into(),
+            "Attendance %".into(),
+            "Punctuality %".into(),
+        ],
+        rows: course_rows
+            .iter()
+            .map(|r| {
+                vec![
+                    r.class_year.to_string(),
+                    r.section.to_string(),
+                    r.course_name.clone().unwrap_or_else(|| "Unknown".into()),
+                    r.course_code.clone().unwrap_or_default(),
+                    r.sessions_finished.to_string(),
+                    format!("{:.1}", r.attendance_rate),
+                    format!("{:.1}", r.punctuality_index),
+                ]
+            })
+            .collect(),
+    });
+
+    if filter_year.is_none() && filter_section.is_none() {
+        let cohort_rows: Vec<Vec<String>> = intel
+            .cohort_by_class_year
+            .iter()
+            .map(|c| {
+                vec![
+                    c.label.clone(),
+                    format!("{:.1}", c.attendance_rate),
+                    c.count.to_string(),
+                ]
+            })
+            .collect();
+        tables.push(dto::ReportTable {
+            title: "All batch years compared".into(),
+            columns: vec![
+                "Batch year".into(),
+                "Attendance %".into(),
+                "Attendance marks".into(),
+            ],
+            rows: cohort_rows,
+        });
+    }
 }
 
 pub async fn build_report_document(
@@ -186,6 +352,7 @@ pub async fn build_report_document(
         "instructor" => "Instructor performance report",
         "course" => "Course attendance report",
         "departmental" => "Cohort & section attendance report",
+        "batch_cohort" => "Batch year, section & course performance report",
         "semester" => "Semester attendance executive brief",
         "compliance" => "Attendance compliance & record coverage",
         "irregularity" => "Irregularity & anomaly digest",
@@ -218,13 +385,21 @@ pub async fn build_report_document(
         ],
     }];
 
+    let filter_note = match (req.class_year, req.section) {
+        (Some(y), Some(s)) => format!(" Filtered to batch year {} section {}.", y, s),
+        (Some(y), None) => format!(" Filtered to batch year {}.", y),
+        (None, Some(s)) => format!(" Filtered to section {} across years.", s),
+        _ => String::new(),
+    };
+
     let summary = format!(
-        "Across {} finished sessions, institution-wide attendance is {:.1}% with {:.1}% punctuality (present vs present+late). {} students appear in attendance data; {} anomalies flagged for review.",
+        "Across {} finished sessions, institution-wide attendance is {:.1}% with {:.1}% punctuality (present vs present+late). {} students appear in attendance data; {} anomalies flagged for review.{}",
         intel.kpi.finished_sessions,
         intel.kpi.overall_attendance_rate,
         intel.kpi.punctuality_index,
         intel.kpi.unique_students,
-        intel.anomalies.len()
+        intel.anomalies.len(),
+        filter_note
     );
 
     let mut tables = Vec::new();
@@ -350,6 +525,13 @@ pub async fn build_report_document(
             ],
             rows,
         });
+    }
+
+    if matches!(
+        req.report_type.as_str(),
+        "departmental" | "batch_cohort" | "semester" | "comparative"
+    ) {
+        push_batch_report_tables(&mut tables, &intel, req.class_year, req.section);
     }
 
     if req.report_type == "compliance" {

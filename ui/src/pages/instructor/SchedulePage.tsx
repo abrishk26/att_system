@@ -76,13 +76,13 @@ export default function SchedulePage() {
                 <div className="flex items-center bg-white border border-slate-200 rounded-2xl p-1 shadow-sm">
                     <button
                         onClick={() => setViewMode('grid')}
-                        className={`p-2.5 rounded-xl transition-all ${viewMode === 'grid' ? 'bg-primary text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
+                        className={`p-2.5 rounded-xl transition-all ${viewMode === 'grid' ? 'bg-primary text-primary-foreground shadow-md' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
                     >
                         <Grid size={20} />
                     </button>
                     <button
                         onClick={() => setViewMode('list')}
-                        className={`p-2.5 rounded-xl transition-all ${viewMode === 'list' ? 'bg-primary text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
+                        className={`p-2.5 rounded-xl transition-all ${viewMode === 'list' ? 'bg-primary text-primary-foreground shadow-md' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
                     >
                         <List size={20} />
                     </button>

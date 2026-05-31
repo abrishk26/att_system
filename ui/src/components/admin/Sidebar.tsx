@@ -4,11 +4,14 @@ import {
   BarChart3,
   FileText,
   Users,
-  Calendar,
   ChevronRight,
   ChevronLeft,
   Shield,
   X,
+  ClipboardList,
+  ShieldCheck,
+  CalendarDays,
+  Sheet,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -18,106 +21,127 @@ interface SidebarProps {
   setIsCollapsed: (collapsed: boolean) => void;
 }
 
-const navItems = [
-  { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/admin/analytics', icon: BarChart3, label: 'Analytics' },
-  { to: '/admin/reports', icon: FileText, label: 'Reports' },
-  { to: '/admin/staff', icon: Users, label: 'Staff Management' },
-  { to: '/admin/schedule', icon: Calendar, label: 'Class Schedule' },
+type NavItem = { to: string; icon: typeof LayoutDashboard; label: string };
+
+const sections: { title: string; items: NavItem[] }[] = [
+  {
+    title: 'Overview',
+    items: [
+      { to: '/admin/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+      { to: '/admin/analytics', icon: BarChart3, label: 'Analytics' },
+    ],
+  },
+  {
+    title: 'Operations',
+    items: [
+      { to: '/admin/sessions', icon: ClipboardList, label: 'Sessions' },
+      { to: '/admin/schedule', icon: CalendarDays, label: 'Class schedule' },
+      { to: '/admin/permissions', icon: ShieldCheck, label: 'Permissions' },
+      { to: '/admin/staff', icon: Users, label: 'Staff' },
+    ],
+  },
+  {
+    title: 'Reporting',
+    items: [
+      { to: '/admin/reports', icon: FileText, label: 'Report center' },
+      { to: '/admin/reports/student-attendance', icon: Sheet, label: 'Student roster' },
+      { to: '/admin/reports/course-attendance', icon: Sheet, label: 'Course roster' },
+    ],
+  },
 ];
 
 export default function Sidebar({ isOpen, setIsOpen, isCollapsed, setIsCollapsed }: SidebarProps) {
   return (
-    <>
-      <aside
-        className={`fixed inset-y-0 left-0 z-50 bg-white dark:bg-neutral-900 border-r border-slate-200 dark:border-neutral-800 transform transition-all duration-300 ease-in-out lg:relative lg:translate-x-0 ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
-        } ${isCollapsed ? 'w-20 lg:w-20' : 'w-72 lg:w-72'}`}
-      >
-        <div className="h-full flex flex-col">
-          {/* Brand Logo */}
-          <div
-            className={`p-6 flex items-center border-b border-slate-50 dark:border-neutral-800/60 ${
-              isCollapsed ? 'justify-center' : 'justify-between'
+    <aside
+      className={`fixed inset-y-0 left-0 z-50 border-r border-border bg-card transform transition-all duration-300 ease-in-out lg:relative lg:translate-x-0 ${
+        isOpen ? 'translate-x-0' : '-translate-x-full'
+      } ${isCollapsed ? 'w-20 lg:w-20' : 'w-72 lg:w-72'}`}
+    >
+      <div className="flex h-full flex-col">
+        <div
+          className={`flex items-center border-b border-border p-6 ${
+            isCollapsed ? 'justify-center' : 'justify-between'
+          }`}
+        >
+          <Link to="/" className="flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/20">
+              <Shield size={22} />
+            </div>
+            {!isCollapsed && (
+              <div className="whitespace-nowrap">
+                <span className="block text-lg font-bold leading-tight tracking-tight text-foreground">
+                  Digital Attendance
+                </span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  Department head
+                </span>
+              </div>
+            )}
+          </Link>
+          {!isCollapsed && (
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="rounded-lg p-2 text-muted-foreground hover:bg-muted lg:hidden"
+            >
+              <X size={20} />
+            </button>
+          )}
+        </div>
+
+        <nav className="flex-1 space-y-6 overflow-y-auto px-4 py-4">
+          {sections.map((section) => (
+            <div key={section.title}>
+              {!isCollapsed && (
+                <p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  {section.title}
+                </p>
+              )}
+              <div className="space-y-1">
+                {section.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === '/admin/dashboard'}
+                    title={isCollapsed ? item.label : ''}
+                    className={({ isActive }) =>
+                      `group flex items-center rounded-xl transition-all ${
+                        isActive
+                          ? 'bg-primary text-primary-foreground shadow-md'
+                          : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                      } ${isCollapsed ? 'justify-center p-3' : 'justify-between px-4 py-2.5'}`
+                    }
+                  >
+                    <div className="flex items-center gap-3">
+                      <item.icon size={18} className="shrink-0" />
+                      {!isCollapsed && <span className="text-sm font-medium">{item.label}</span>}
+                    </div>
+                    {!isCollapsed && (
+                      <ChevronRight
+                        size={14}
+                        className="opacity-0 transition-opacity group-hover:opacity-100"
+                      />
+                    )}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+
+        <div className="mt-auto border-t border-border p-4">
+          <button
+            type="button"
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-muted-foreground transition-all hover:bg-muted hover:text-foreground ${
+              isCollapsed ? 'justify-center p-3' : ''
             }`}
           >
-            <Link to="/" className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/20 shrink-0">
-                <Shield size={22} />
-              </div>
-              {!isCollapsed && (
-                <div className="transition-opacity duration-300 opacity-100 whitespace-nowrap">
-                  <span className="font-bold text-lg tracking-tight text-slate-900 dark:text-white block leading-tight">
-                    Smart Campus
-                  </span>
-                  <span className="text-[10px] text-slate-400 dark:text-neutral-500 font-bold uppercase tracking-widest text-primary">
-                    Admin Panel
-                  </span>
-                </div>
-              )}
-            </Link>
-            {!isCollapsed && (
-              <button
-                onClick={() => setIsOpen(false)}
-                className="lg:hidden p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-neutral-800 text-slate-400 dark:text-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary/10"
-              >
-                <X size={20} />
-              </button>
-            )}
-          </div>
-
-          {/* Navigation Links */}
-          <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
-            {!isCollapsed && (
-              <p className="px-4 text-[10px] font-bold text-slate-400 dark:text-neutral-500 uppercase tracking-widest mb-4">
-                Main Menu
-              </p>
-            )}
-            {navItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                title={isCollapsed ? item.label : ''}
-                className={({ isActive }) => `
-                  flex items-center rounded-xl transition-all group
-                  ${
-                    isActive
-                      ? 'bg-slate-900 dark:bg-primary text-white shadow-lg shadow-slate-200 dark:shadow-none'
-                      : 'text-slate-600 dark:text-neutral-400 hover:bg-slate-50 dark:hover:bg-neutral-800 hover:text-primary dark:hover:text-white'
-                  }
-                  ${isCollapsed ? 'justify-center p-3' : 'justify-between px-4 py-3'}
-                `}
-              >
-                <div className="flex items-center gap-3">
-                  <item.icon size={20} className="shrink-0" />
-                  {!isCollapsed && (
-                    <span className="font-medium whitespace-nowrap">{item.label}</span>
-                  )}
-                </div>
-                {!isCollapsed && (
-                  <ChevronRight
-                    size={14}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                  />
-                )}
-              </NavLink>
-            ))}
-          </nav>
-
-          {/* Footer — collapse toggle only */}
-          <div className="p-4 mt-auto border-t border-slate-100 dark:border-neutral-800 bg-slate-50/50 dark:bg-neutral-900/50">
-            <button
-              onClick={() => setIsCollapsed(!isCollapsed)}
-              className={`w-full flex items-center gap-3 px-4 py-3 text-slate-400 dark:text-neutral-500 hover:text-primary dark:hover:text-white hover:bg-slate-50 dark:hover:bg-neutral-800 rounded-xl transition-all font-medium text-sm ${
-                isCollapsed ? 'justify-center p-3' : ''
-              }`}
-            >
-              {isCollapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
-              {!isCollapsed && <span>Collapse Sidebar</span>}
-            </button>
-          </div>
+            {isCollapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+            {!isCollapsed && <span>Collapse</span>}
+          </button>
         </div>
-      </aside>
-    </>
+      </div>
+    </aside>
   );
 }

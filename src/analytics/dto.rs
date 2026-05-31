@@ -145,6 +145,44 @@ pub struct CohortComparePoint {
     pub count: usize,
 }
 
+/// Aggregated attendance for a batch year + section across all courses.
+#[derive(Serialize, Debug, Clone)]
+pub struct BatchSectionRow {
+    pub class_year: i32,
+    pub section: i32,
+    pub sessions_finished: usize,
+    pub records: usize,
+    pub course_count: usize,
+    pub attendance_rate: f64,
+    pub punctuality_index: f64,
+}
+
+/// Per-course performance within a specific batch year and section.
+#[derive(Serialize, Debug, Clone)]
+pub struct BatchSectionCourseRow {
+    pub class_year: i32,
+    pub section: i32,
+    pub course_id: Uuid,
+    pub course_code: Option<String>,
+    pub course_name: Option<String>,
+    pub sessions_finished: usize,
+    pub records: usize,
+    pub attendance_rate: f64,
+    pub punctuality_index: f64,
+}
+
+/// How a single course performs across different batch years (for comparison).
+#[derive(Serialize, Debug, Clone)]
+pub struct CourseByBatchRow {
+    pub course_id: Uuid,
+    pub course_code: Option<String>,
+    pub course_name: Option<String>,
+    pub class_year: i32,
+    pub section: i32,
+    pub sessions_finished: usize,
+    pub attendance_rate: f64,
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub struct UniversityIntelligence {
     pub meta: AnalyticsMeta,
@@ -161,11 +199,14 @@ pub struct UniversityIntelligence {
     pub session_heatmap: Vec<HeatCell>,
     pub tap_audit: TapAuditSummary,
     pub cohort_by_class_year: Vec<CohortComparePoint>,
+    pub batch_sections: Vec<BatchSectionRow>,
+    pub batch_section_courses: Vec<BatchSectionCourseRow>,
+    pub courses_by_batch: Vec<CourseByBatchRow>,
 }
 
 // ── Report builder ───────────────────────────────────────────────────────────
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 pub struct ReportBuildRequest {
     pub report_type: String,
     #[serde(default)]
@@ -174,6 +215,12 @@ pub struct ReportBuildRequest {
     pub to: Option<String>,
     #[serde(default)]
     pub include_charts: bool,
+    /// Filter batch tables to this year (e.g. 3 for third year).
+    #[serde(default)]
+    pub class_year: Option<i32>,
+    /// Filter batch tables to this section number within the year.
+    #[serde(default)]
+    pub section: Option<i32>,
 }
 
 #[derive(Serialize, Debug, Clone)]

@@ -87,10 +87,10 @@ export default function StudentLayout() {
                             {!isCollapsed && (
                                 <div className="whitespace-nowrap">
                                     <span className="block text-lg font-semibold tracking-tight">
-                                        Student Portal
+                                        Digital Attendance
                                     </span>
-                                    <span className="text-[10px] font-medium uppercase tracking-widest text-primary">
-                                        Attendance
+                                    <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">
+                                        Student portal
                                     </span>
                                 </div>
                             )}
