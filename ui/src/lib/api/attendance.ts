@@ -14,6 +14,7 @@ interface BackendSession {
   class_id: string;
   course_id: string;
   status: string;
+  created_at: string;
 }
 
 interface BackendCourse {
@@ -24,7 +25,6 @@ interface BackendCourse {
 
 /**
  * Fetches the overall attendance history for a given student.
- * Uses registered courses as the primary source to ensure all enrolled courses are shown.
  */
 export async function getAttendanceHistory(studentId: string): Promise<CourseAttendance[]> {
   void studentId;
@@ -35,9 +35,8 @@ export async function getAttendanceHistory(studentId: string): Promise<CourseAtt
     fetcher<BackendCourse[]>('/student/courses'),
   ]);
 
-  const sessionsById = new Map(allSessions.map(session => [session.id, session]));
-  
-  // Group attendance records by course_id
+  const sessionsById = new Map(allSessions.map((session) => [session.id, session]));
+
   const recordsByCourse = new Map<string, BackendAttendanceRecord[]>();
   for (const record of attendanceRecords) {
     const session = sessionsById.get(record.session_id);
@@ -51,10 +50,10 @@ export async function getAttendanceHistory(studentId: string): Promise<CourseAtt
   return registeredCourses.map((course) => {
     const courseRecords = recordsByCourse.get(course.id) ?? [];
     const totalSessions = courseRecords.length;
-    const present = courseRecords.filter(record => record.status === 'present').length;
-    const late = courseRecords.filter(record => record.status === 'late').length;
-    const absent = courseRecords.filter(record => record.status === 'absent').length;
-    const excused = courseRecords.filter(record => record.status === 'excused').length;
+    const present = courseRecords.filter((record) => record.status === 'present').length;
+    const late = courseRecords.filter((record) => record.status === 'late').length;
+    const absent = courseRecords.filter((record) => record.status === 'absent').length;
+    const excused = courseRecords.filter((record) => record.status === 'excused').length;
 
     return {
       courseId: course.id,
@@ -65,24 +64,28 @@ export async function getAttendanceHistory(studentId: string): Promise<CourseAtt
       late,
       absent,
       excused,
-      attendancePercentage: totalSessions > 0 ? Math.round(((present + late) / totalSessions) * 100) : 0,
+      attendancePercentage:
+        totalSessions > 0 ? Math.round(((present + late) / totalSessions) * 100) : 0,
     };
   });
 }
 
 /**
- * Fetches the detailed session-by-session attendance record for a specific course.
+ * Fetches session-by-session attendance for a specific course.
  */
-export async function getCourseDetail(studentId: string, courseId: string): Promise<SessionRecord[]> {
+export async function getCourseDetail(
+  studentId: string,
+  courseId: string
+): Promise<SessionRecord[]> {
   void studentId;
 
-  const [attendanceRecords, allSessions, course] = await Promise.all([
+  const [attendanceRecords, studentSessions, course] = await Promise.all([
     fetcher<BackendAttendanceRecord[]>('/sessions/student'),
-    fetcher<BackendSession[]>('/session'),
+    fetcher<BackendSession[]>('/student/sessions'),
     fetcher<BackendCourse>(`/course/${courseId}`),
   ]);
 
-  const sessionsById = new Map(allSessions.map(session => [session.id, session]));
+  const sessionsById = new Map(studentSessions.map((session) => [session.id, session]));
 
   const results: SessionRecord[] = [];
 
@@ -92,16 +95,25 @@ export async function getCourseDetail(studentId: string, courseId: string): Prom
       continue;
     }
 
+    const sessionDate = session.created_at
+      ? new Date(session.created_at)
+      : null;
+
     results.push({
-      classId: session.id,
+      sessionId: session.id,
+      classId: session.class_id,
       courseId,
       courseName: course.name,
-      date: 'TBA',
-      startTime: 'TBA',
+      date: sessionDate ? sessionDate.toISOString() : 'TBA',
+      startTime: sessionDate
+        ? sessionDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '—',
       status: record.status as SessionRecord['status'],
       method: 'manual',
     });
   }
 
-  return results;
+  return results.sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+  );
 }

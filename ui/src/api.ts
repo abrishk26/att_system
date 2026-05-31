@@ -185,7 +185,7 @@ export interface InstructorDashboardMetrics {
 
 export interface StudentDashboardMetrics {
   overall_attendance: number;
-  courses_performance: Array<{ course_name: string; percentage: number }>;
+  courses_performance: Array<{ course_id: string; course_name: string; percentage: number }>;
   attendance_trend: Array<{ date: string; status: string }>;
 }
 

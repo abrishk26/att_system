@@ -351,6 +351,7 @@ pub struct StudentProfile {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CoursePerformance {
+    pub course_id: String,
     pub course_name: String,
     pub percentage: f64,
 }

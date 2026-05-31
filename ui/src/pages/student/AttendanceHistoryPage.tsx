@@ -1,150 +1,144 @@
-import React from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useAttendance } from '../../hooks/student/useAttendance';
+import { BookOpen, History, ChevronRight } from 'lucide-react';
+import { PageHeader } from '@/components/instructor/PageHeader';
+import { Card, CardContent } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
-  ArrowLeft,
-  BookOpen,
-  BarChart3,
-  AlertCircle
-} from 'lucide-react';
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 
-const AttendanceHistoryPage: React.FC = () => {
+export default function AttendanceHistoryPage() {
   const { studentId } = useOutletContext<{ studentId: string }>();
   const { history, isLoading, error } = useAttendance(studentId);
   const navigate = useNavigate();
 
-  const handleCourseClick = (courseId: string) => {
-    navigate(`/student/course/${courseId}`);
-  };
-
   if (isLoading) {
     return (
-      <div className="space-y-6 animate-pulse p-4 md:p-0">
-        <div className="h-20 bg-slate-200 rounded-2xl w-full"></div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="h-64 bg-slate-200 rounded-[2rem]"></div>
-          ))}
-        </div>
+      <div className="mx-auto max-w-6xl space-y-6">
+        <Skeleton className="h-20 w-full rounded-xl" />
+        <Skeleton className="h-96 w-full rounded-xl" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 pb-10">
-      {/* Simplified Page Header */}
-      <div className="flex items-center gap-6 py-4">
-        <button
-          onClick={() => navigate(-1)}
-          className="w-10 h-10 flex items-center justify-center rounded-xl bg-white shadow-sm border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
-        >
-          <ArrowLeft size={20} />
-        </button>
-        <div>
-          <h1 className="text-2xl font-black text-slate-900">Attendance history</h1>
-          <p className="text-slate-500 text-sm font-medium">Detailed overview of your course attendance</p>
-        </div>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-8">
+      <PageHeader
+        title="Attendance"
+        description="Your attendance rate and session breakdown for every enrolled course."
+        icon={<History className="h-5 w-5" />}
+      />
 
       {error ? (
-        <div className="glass p-12 text-center rounded-[2rem]">
-          <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
-            <AlertCircle size={32} />
-          </div>
-          <h2 className="text-xl font-bold text-slate-900">Failed to load history</h2>
-          <p className="text-slate-500">Please try again later or contact support.</p>
-        </div>
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="font-medium text-foreground">Could not load attendance history</p>
+            <p className="mt-1 text-sm text-muted-foreground">Please try again later.</p>
+          </CardContent>
+        </Card>
+      ) : history.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center py-16 text-center">
+            <History className="mb-3 h-10 w-10 text-muted-foreground/40" />
+            <p className="font-medium">No attendance records yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Records appear here after your instructor starts sessions.
+            </p>
+          </CardContent>
+        </Card>
       ) : (
-        <div className="bg-white rounded-[1.5rem] shadow-sm border border-slate-100 overflow-hidden">
-          {history.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50/50 border-b border-slate-100">
-                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Course</th>
-                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Attendance Rate</th>
-                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">Stats</th>
-                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {history.map((course) => {
-                    const percentage = course.attendancePercentage;
-                    const isLow = percentage < 75;
-                    const isExcellent = percentage >= 90;
+        <Card>
+          <CardContent className="px-4 py-2 md:px-6">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Course</TableHead>
+                  <TableHead className="w-[200px]">Attendance</TableHead>
+                  <TableHead className="text-center">Sessions</TableHead>
+                  <TableHead className="text-right">Breakdown</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {history.map((course) => {
+                  const rate = course.attendancePercentage;
+                  const isLow = rate < 75;
+                  const isStrong = rate >= 85;
 
-                    return (
-                      <tr
-                        key={course.courseId}
-                        className="group hover:bg-slate-50/50 transition-colors cursor-pointer"
-                        onClick={() => handleCourseClick(course.courseId)}
-                      >
-                        <td className="px-6 py-5">
-                          <div className="flex items-center gap-4">
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${isLow ? 'bg-red-50 text-red-500' : isExcellent ? 'bg-emerald-50 text-emerald-500' : 'bg-primary/5 text-primary'
-                              }`}>
-                              <BookOpen size={20} />
-                            </div>
-                            <div>
-                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{course.courseCode}</p>
-                              <h3 className="text-sm font-bold text-slate-900 group-hover:text-primary transition-colors">
-                                {course.courseName}
-                              </h3>
-                            </div>
+                  return (
+                    <TableRow
+                      key={course.courseId}
+                      className="cursor-pointer"
+                      onClick={() => navigate(`/student/course/${course.courseId}`)}
+                    >
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={cn(
+                              'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+                              isLow
+                                ? 'bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-400'
+                                : isStrong
+                                  ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400'
+                                  : 'bg-primary/10 text-primary'
+                            )}
+                          >
+                            <BookOpen className="h-4 w-4" />
                           </div>
-                        </td>
-                        <td className="px-6 py-5">
-                          <div className="flex items-center gap-3">
-                            <span className={`text-sm font-black w-10 ${isLow ? 'text-red-500' : isExcellent ? 'text-emerald-500' : 'text-slate-900'
-                              }`}>
-                              {percentage}%
-                            </span>
-                            <div className="flex-1 h-1.5 bg-slate-100 rounded-full min-w-[80px] overflow-hidden">
-                              <div
-                                className={`h-full rounded-full transition-all duration-1000 ease-out ${isLow ? 'bg-red-500' : isExcellent ? 'bg-emerald-500' : 'bg-primary'
-                                  }`}
-                                style={{ width: `${percentage}%` }}
-                              ></div>
-                            </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">{course.courseCode}</p>
+                            <p className="font-medium">{course.courseName}</p>
                           </div>
-                        </td>
-                        <td className="px-6 py-5">
-                          <div className="flex items-center justify-center gap-2">
-                            <span className="text-xs font-bold text-slate-700">{course.present}</span>
-                            <span className="text-xs text-slate-300 font-medium italic">/ {course.totalSessions}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-5 text-right">
-                          <span className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase ${isLow ? 'bg-red-50 text-red-600' : isExcellent ? 'bg-emerald-50 text-emerald-600' : 'bg-blue-50 text-blue-600'
-                            }`}>
-                            {isLow ? 'Critical' : isExcellent ? 'Excellent' : 'Good'}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Progress
+                            value={rate}
+                            className={cn('h-2 flex-1', isLow && '[&>div]:bg-rose-500')}
+                          />
+                          <span
+                            className={cn(
+                              'w-10 text-right text-sm font-medium tabular-nums',
+                              isLow && 'text-rose-600',
+                              isStrong && 'text-emerald-600'
+                            )}
+                          >
+                            {rate}%
                           </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="p-20 text-center">
-              <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 border border-slate-100 text-slate-200">
-                <BarChart3 size={40} />
-              </div>
-              <h2 className="text-xl font-bold text-slate-900">No records found</h2>
-              <p className="text-slate-500 text-sm mt-2">You haven't attended any sessions for your courses yet.</p>
-              <button
-                onClick={() => navigate('/student/home')}
-                className="mt-6 px-6 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-primary transition-colors"
-              >
-                Return to Dashboard
-              </button>
-            </div>
-          )}
-        </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center text-sm tabular-nums text-muted-foreground">
+                        {course.present + course.late}
+                        <span className="text-muted-foreground/60"> / {course.totalSessions}</span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2 text-xs tabular-nums">
+                          <span className="text-emerald-600">{course.present}P</span>
+                          <span className="text-amber-600">{course.late}L</span>
+                          <span className="text-rose-600">{course.absent}A</span>
+                          <span className="text-sky-600">{course.excused}E</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
-};
-
-export default AttendanceHistoryPage;
+}

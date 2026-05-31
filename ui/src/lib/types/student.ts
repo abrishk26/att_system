@@ -27,11 +27,12 @@ export interface CourseAttendance {
 
 // from classes table — one row per session the student attended or missed
 export interface SessionRecord {
-  classId: string          // classes.id
+  sessionId: string
+  classId: string
   courseId: string
   courseName: string
-  date: string             // classes.date
-  startTime: string        // classes.start_time
+  date: string
+  startTime: string
   status: AttendanceStatus
   method: 'nfc' | 'manual'
 }

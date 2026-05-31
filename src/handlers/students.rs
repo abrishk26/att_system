@@ -519,8 +519,8 @@ pub async fn get_student_dashboard_metrics_handler(
     let student_uuid = Uuid::parse_str(&user_id).unwrap();
     let records = attendance_record::table.filter(attendance_record::student_id.eq(student_uuid)).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
     let total = records.len() as f64;
-    let present = records.iter().filter(|r| r.status == "present").count() as f64;
-    let overall = if total > 0.0 { (present / total) * 100.0 } else { 0.0 };
+    let accounted = records.iter().filter(|r| r.status == "present" || r.status == "late").count() as f64;
+    let overall = if total > 0.0 { (accounted / total) * 100.0 } else { 0.0 };
 
     // Build per-course performance using session data
     let session_ids: Vec<Uuid> = records.iter().map(|r| r.session_id).collect();
@@ -531,22 +531,26 @@ pub async fn get_student_dashboard_metrics_handler(
     for rec in &records {
         if let Some(sess) = sessions_map.get(&rec.session_id) {
             let entry = course_stats.entry(sess.course_id).or_insert((0, 0));
-            entry.1 += 1; // total
-            if rec.status == "present" { entry.0 += 1; } // present
+            entry.1 += 1;
+            if rec.status == "present" || rec.status == "late" {
+                entry.0 += 1;
+            }
         }
     }
 
     let mut courses_performance = Vec::new();
-    for (course_id, (pres, tot)) in &course_stats {
+    for (course_id, (accounted, tot)) in &course_stats {
         let course_name = match state.client.request(Method::GET, format!("{}/course/{}", state.data_source_url, course_id)).send().await {
             Ok(r) if r.status() == StatusCode::OK => r.json::<Course>().await.map(|c| c.name).unwrap_or_else(|_| course_id.to_string()),
             _ => course_id.to_string(),
         };
         courses_performance.push(crate::models::CoursePerformance {
+            course_id: course_id.to_string(),
             course_name,
-            percentage: if *tot > 0 { (*pres as f64 / *tot as f64) * 100.0 } else { 0.0 },
+            percentage: if *tot > 0 { (*accounted as f64 / *tot as f64) * 100.0 } else { 0.0 },
         });
     }
+    courses_performance.sort_by(|a, b| a.course_name.cmp(&b.course_name));
 
     // Build trend data from recent records
     let trend: Vec<crate::models::AttendanceTrend> = records.iter().rev().take(20).map(|r| {

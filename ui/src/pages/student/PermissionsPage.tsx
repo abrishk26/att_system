@@ -1,42 +1,61 @@
-import React, { useState, useEffect } from 'react';
-import { useOutletContext, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { api, type Course, type Session, type AttendanceRecord, type Permission } from '../../api';
 import {
-  ArrowLeft,
   ShieldAlert,
   Plus,
-  MessageSquare,
-  FileUp,
   CheckCircle2,
-  Clock,
-  XCircle,
-  ChevronDown,
-  ChevronRight,
-  Search
+  Loader2,
+  FileUp,
 } from 'lucide-react';
+import { PageHeader } from '@/components/instructor/PageHeader';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { StatusBadge } from '@/components/student/shared/StatusBadge';
+import { Skeleton } from '@/components/ui/skeleton';
 
-const PermissionsPage: React.FC = () => {
+export default function PermissionsPage() {
   const { studentId: _studentId } = useOutletContext<{ studentId: string }>();
-  const navigate = useNavigate();
 
-  // State
   const [courses, setCourses] = useState<Course[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [myRecords, setMyRecords] = useState<AttendanceRecord[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
 
-  const [selectedCourse, setSelectedCourse] = useState<string>('');
-  const [selectedSession, setSelectedSession] = useState<string>('');
+  const [selectedCourse, setSelectedCourse] = useState('');
+  const [selectedSession, setSelectedSession] = useState('');
   const [reason, setReason] = useState('');
   const [file, setFile] = useState<File | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-
   const [showModal, setShowModal] = useState(false);
 
-  // Fetch initial data
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -45,9 +64,8 @@ const PermissionsPage: React.FC = () => {
           api.studentCourses(),
           api.studentSessionsFull(),
           api.studentSessions(),
-          api.studentPermissions()
+          api.studentPermissions(),
         ]);
-
         setCourses(courseList);
         setSessions(sessionList);
         setMyRecords(recordList);
@@ -61,37 +79,48 @@ const PermissionsPage: React.FC = () => {
     loadData();
   }, []);
 
-  // Filter sessions based on selected course and student enrollment
-  const filteredSessions = React.useMemo(() => {
+  const sessionById = useMemo(
+    () => new Map(sessions.map((s) => [s.id, s])),
+    [sessions]
+  );
+
+  const courseById = useMemo(
+    () => new Map(courses.map((c) => [c.id, c])),
+    [courses]
+  );
+
+  const filteredSessions = useMemo(() => {
     if (!selectedCourse) return [];
-    const studentSessionIds = new Set(myRecords.map(r => r.session_id));
-    return sessions.filter(s => s.course_id === selectedCourse && studentSessionIds.has(s.id));
+    const studentSessionIds = new Set(myRecords.map((r) => r.session_id));
+    return sessions
+      .filter((s) => s.course_id === selectedCourse && studentSessionIds.has(s.id))
+      .sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
   }, [selectedCourse, sessions, myRecords]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedSession || !reason) return;
+    if (!selectedSession || !reason.trim()) return;
 
     try {
       setIsSubmitting(true);
       const formData = new FormData();
       formData.append('session_id', selectedSession);
-      formData.append('description', reason);
+      formData.append('description', reason.trim());
       if (file) formData.append('file', file);
 
       await api.createPermission(formData);
-
-      // Refresh permissions
       const updated = await api.studentPermissions();
       setPermissions(updated);
 
-      // Reset form
       setSelectedCourse('');
       setSelectedSession('');
       setReason('');
       setFile(null);
       setShowModal(false);
-      setSuccessMessage('Permission request submitted successfully!');
+      setSuccessMessage('Your request was submitted successfully.');
       setTimeout(() => setSuccessMessage(null), 5000);
     } catch (err) {
       console.error('Submission failed', err);
@@ -100,246 +129,229 @@ const PermissionsPage: React.FC = () => {
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'accepted':
-        return <span className="px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-600 text-[10px] font-bold uppercase flex items-center gap-1.5"><CheckCircle2 size={12} /> Approved</span>;
-      case 'rejected':
-        return <span className="px-2.5 py-1 rounded-md bg-red-50 text-red-600 text-[10px] font-bold uppercase flex items-center gap-1.5"><XCircle size={12} /> Rejected</span>;
-      default:
-        return <span className="px-2.5 py-1 rounded-md bg-amber-50 text-amber-600 text-[10px] font-bold uppercase flex items-center gap-1.5"><Clock size={12} /> Pending</span>;
-    }
+  const sessionLabel = (sessionId: string) => {
+    const session = sessionById.get(sessionId);
+    const course = session ? courseById.get(session.course_id) : undefined;
+    const date = session
+      ? new Date(session.created_at).toLocaleDateString(undefined, {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        })
+      : 'Unknown date';
+    return `${course?.name ?? 'Course'} · ${date}`;
   };
 
   if (isLoading) {
     return (
-      <div className="space-y-6 animate-pulse">
-        <div className="h-20 bg-slate-100 rounded-2xl"></div>
-        <div className="h-96 bg-slate-100 rounded-2xl"></div>
+      <div className="mx-auto max-w-6xl space-y-6">
+        <Skeleton className="h-20 w-full rounded-xl" />
+        <Skeleton className="h-80 w-full rounded-xl" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 pb-10">
-      {/* Simplified Header */}
-      <div className="flex items-center justify-between py-4">
-        <div className="flex items-center gap-6">
-          <button
-            onClick={() => navigate(-1)}
-            className="w-10 h-10 flex items-center justify-center rounded-xl bg-white shadow-sm border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
-          >
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h1 className="text-2xl font-black text-slate-900">Permission requests</h1>
-            <p className="text-slate-500 text-sm font-medium">Manage and track your absence justifications</p>
-          </div>
-        </div>
-
-        <button
-          onClick={() => setShowModal(true)}
-          className="bg-slate-900 text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-primary transition-colors shadow-lg shadow-slate-200"
-        >
-          <Plus size={18} />
-          New request
-        </button>
-      </div>
+    <div className="mx-auto max-w-6xl space-y-8">
+      <PageHeader
+        title="Permission requests"
+        description="Submit and track absence justifications for class sessions."
+        icon={<ShieldAlert className="h-5 w-5" />}
+        actions={
+          <Button onClick={() => setShowModal(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            New request
+          </Button>
+        }
+      />
 
       {successMessage && (
-        <div className="p-4 rounded-xl bg-emerald-50 text-emerald-700 text-sm font-medium border border-emerald-100 flex items-center gap-2 animate-fade-in shadow-sm">
-          <CheckCircle2 size={18} />
+        <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
           {successMessage}
         </div>
       )}
 
-      {/* Permissions Table */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-        <div className="p-6 border-b border-slate-50 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-            <Search className="text-primary" size={20} />
-            Recent Requests
-          </h2>
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{permissions.length} total</span>
-        </div>
-
-        {permissions.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50/50">
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Course & Session</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">Reason</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {permissions.map((req) => {
-                  const course = courses.find(c => sessions.find(s => s.id === req.session_id)?.course_id === c.id);
-                  return (
-                    <tr key={req.id} className="group hover:bg-slate-50/50 transition-colors">
-                      <td className="px-6 py-5">
-                        <div className="flex items-center gap-4">
-                          <div className="w-10 h-10 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 group-hover:text-primary transition-colors">
-                            <ShieldAlert size={20} />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2 mb-0.5">
-                              <h3 className="text-sm font-bold text-slate-900 leading-none">{course?.name || 'Unknown Course'}</h3>
-                              <ChevronRight size={14} className="text-slate-300" />
-                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">SESS-{req.session_id.slice(0, 4)}</span>
-                            </div>
-                            <p className="text-[10px] font-bold text-slate-400 italic">Course Code: {course?.course_id || 'N/A'}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-5 max-w-xs">
-                        <p className="text-sm text-slate-500 line-clamp-2">{req.description}</p>
-                      </td>
-                      <td className="px-6 py-5 text-right">
-                        <div className="inline-block">
-                          {getStatusBadge(req.status)}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="text-center py-20 grayscale opacity-50">
-            <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-              <MessageSquare size={32} className="text-slate-300" />
+      <Card>
+        <CardHeader className="border-b border-border pb-4">
+          <CardTitle className="text-base">Your requests</CardTitle>
+          <CardDescription>
+            {permissions.length} request{permissions.length !== 1 ? 's' : ''} on file
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-4 py-2 md:px-6">
+          {permissions.length === 0 ? (
+            <div className="py-16 text-center">
+              <ShieldAlert className="mx-auto mb-3 h-10 w-10 text-muted-foreground/40" />
+              <p className="font-medium">No requests yet</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Submit a request when you need to justify an absence.
+              </p>
+              <Button className="mt-4" onClick={() => setShowModal(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                New request
+              </Button>
             </div>
-            <p className="text-slate-500 font-medium text-sm">No permission requests yet</p>
-          </div>
-        )}
-      </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Course & session</TableHead>
+                  <TableHead>Submitted</TableHead>
+                  <TableHead>Reason</TableHead>
+                  <TableHead className="text-right">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {permissions.map((req) => (
+                  <TableRow key={req.id}>
+                    <TableCell className="font-medium">{sessionLabel(req.session_id)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                      {new Date(req.created_at).toLocaleDateString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </TableCell>
+                    <TableCell className="max-w-[240px]">
+                      <span className="line-clamp-2 break-words text-sm text-muted-foreground">
+                        {req.description}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <StatusBadge
+                        status={
+                          req.status === 'accepted'
+                            ? 'accepted'
+                            : req.status === 'rejected'
+                              ? 'rejected'
+                              : 'pending'
+                        }
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* New Request Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in"
-            onClick={() => setShowModal(false)}
-          />
-          <div className="relative bg-white rounded-[2.5rem] w-full max-w-2xl shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-200 overflow-hidden">
-            <div className="p-8 border-b border-slate-50 flex items-center justify-between">
-              <div>
-                <h3 className="text-xl font-bold text-slate-900">New Permission Request</h3>
-                <p className="text-sm text-slate-500 font-medium">Explain your absence for a class session</p>
-              </div>
-              <button
-                onClick={() => setShowModal(false)}
-                className="w-10 h-10 flex items-center justify-center rounded-xl hover:bg-slate-50 text-slate-400 hover:text-red-500 transition-all"
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-lg">
+          <DialogHeader className="border-b border-border bg-muted/30 px-6 py-5">
+            <DialogTitle>New permission request</DialogTitle>
+            <DialogDescription>
+              Explain your absence for a specific class session. Attach supporting evidence if you have it.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleSubmit} className="space-y-5 px-6 py-5">
+            <div className="space-y-2">
+              <Label htmlFor="perm-course">Course</Label>
+              <Select
+                value={selectedCourse || undefined}
+                onValueChange={(v) => {
+                  setSelectedCourse(v);
+                  setSelectedSession('');
+                }}
               >
-                <XCircle size={20} />
-              </button>
+                <SelectTrigger id="perm-course">
+                  <SelectValue placeholder="Select a course" />
+                </SelectTrigger>
+                <SelectContent>
+                  {courses.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name} ({c.course_id})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-8 space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.05em] ml-1">Select Course</label>
-                  <div className="relative">
-                    <select
-                      value={selectedCourse}
-                      onChange={(e) => {
-                        setSelectedCourse(e.target.value);
-                        setSelectedSession('');
-                      }}
-                      className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 text-sm text-slate-900 font-bold appearance-none focus:border-primary/30 focus:bg-white focus:outline-none transition-all cursor-pointer"
-                      required
-                    >
-                      <option value="">Course...</option>
-                      {courses.map(c => (
-                        <option key={c.id} value={c.id}>{c.course_id}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.05em] ml-1">Select Session</label>
-                  <div className="relative">
-                    <select
-                      value={selectedSession}
-                      onChange={(e) => setSelectedSession(e.target.value)}
-                      disabled={!selectedCourse || filteredSessions.length === 0}
-                      className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 text-sm text-slate-900 font-bold appearance-none focus:border-primary/30 focus:bg-white focus:outline-none transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                      required
-                    >
-                      <option value="">Session...</option>
-                      {filteredSessions.map(s => (
-                        <option key={s.id} value={s.id}>Class {s.id.slice(0, 8)}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.05em] ml-1">Reason for Absence</label>
-                <div className="relative">
-                  <textarea
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                    className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-4 text-sm text-slate-900 font-medium focus:border-primary/30 focus:bg-white focus:outline-none transition-all placeholder:text-slate-300 min-h-[120px] resize-none"
-                    placeholder="Provide a detailed explanation..."
-                    required
+            <div className="space-y-2">
+              <Label htmlFor="perm-session">Session</Label>
+              <Select
+                value={selectedSession || undefined}
+                disabled={!selectedCourse || filteredSessions.length === 0}
+                onValueChange={setSelectedSession}
+              >
+                <SelectTrigger id="perm-session">
+                  <SelectValue
+                    placeholder={
+                      !selectedCourse
+                        ? 'Select a course first'
+                        : filteredSessions.length === 0
+                          ? 'No sessions available'
+                          : 'Select a session'
+                    }
                   />
-                  <MessageSquare className="absolute right-4 top-4 text-slate-200" size={18} />
+                </SelectTrigger>
+                <SelectContent>
+                  {filteredSessions.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {new Date(s.created_at).toLocaleString(undefined, {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="perm-reason">Reason</Label>
+              <textarea
+                id="perm-reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Describe why you were absent or late…"
+                className="flex min-h-[120px] w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Attachment (optional)</Label>
+              <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-border bg-muted/30 p-4 transition-colors hover:bg-muted/50">
+                <FileUp className="h-5 w-5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 text-left">
+                  <p className="truncate text-sm font-medium">
+                    {file ? file.name : 'Upload PDF, JPG, or PNG'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">Max one file</p>
                 </div>
-              </div>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                />
+              </label>
+            </div>
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.05em] ml-1">Attachment (Optional)</label>
-                <label className="flex items-center gap-3 w-full p-4 bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 hover:border-primary/30 transition-all group">
-                  <div className="w-10 h-10 rounded-lg bg-white border border-slate-100 flex items-center justify-center text-slate-400 group-hover:text-primary transition-colors shrink-0">
-                    <FileUp size={18} />
-                  </div>
-                  <div className="flex-1 text-left">
-                    <p className="text-xs font-bold text-slate-700">
-                      {file ? file.name : "Click to upload evidence"}
-                    </p>
-                    <p className="text-[10px] text-slate-400 font-medium italic">Supports PDF, JPG, PNG</p>
-                  </div>
-                  <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-                </label>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="flex-1 bg-slate-50 text-slate-600 rounded-xl py-3.5 font-bold text-sm hover:bg-slate-100 transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting || !selectedSession}
-                  className="flex-[2] bg-slate-900 text-white rounded-xl py-3.5 font-bold text-sm hover:bg-primary transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                      Submitting...
-                    </>
-                  ) : (
-                    "Submit Request"
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            <DialogFooter className="gap-2 border-t border-border bg-muted/20 px-0 pb-0 pt-4 sm:justify-between">
+              <Button type="button" variant="ghost" onClick={() => setShowModal(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting || !selectedSession || !reason.trim()}>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Submitting…
+                  </>
+                ) : (
+                  'Submit request'
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
-};
-
-export default PermissionsPage;
+}
