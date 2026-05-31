@@ -18,11 +18,19 @@ import {
 } from 'lucide-react';
 import { NotificationBell } from '../NotificationBell';
 import { useDarkMode } from '../../hooks/useDarkMode';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 export default function InstructorLayout() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isCollapsed, setIsCollapsed] = useState(false);
-    const [isProfileOpen, setIsProfileOpen] = useState(false);
     const [isDark, setIsDark] = useDarkMode();
     const { user, logout, isLoading } = useAuth();
     const navigate = useNavigate();
@@ -165,61 +173,35 @@ export default function InstructorLayout() {
                         <NotificationBell />
                         <div className="h-8 w-px bg-slate-200 dark:bg-neutral-800 hidden sm:block mx-1"></div>
 
-                        <div className="relative">
-                            <button
-                                onClick={() => setIsProfileOpen(!isProfileOpen)}
-                                className="flex items-center gap-3 p-1 rounded-xl hover:bg-slate-50 dark:hover:bg-neutral-800 transition-all group"
-                            >
-                                <div className="hidden sm:block text-right">
-                                    <p className="text-[10px] text-slate-400 dark:text-neutral-500 font-bold uppercase tracking-tight leading-none mb-1">Instructor</p>
-                                    <p className="text-sm font-bold text-slate-900 dark:text-white leading-none">{user.first_name}</p>
-                                </div>
-                                <div className="w-10 h-10 rounded-xl bg-primary text-white flex items-center justify-center font-bold text-sm shadow-md shadow-primary/20 group-hover:scale-105 transition-transform">
-                                    {user.first_name?.charAt(0)}
-                                </div>
-                            </button>
-
-                            {/* Profile Popover */}
-                            {isProfileOpen && (
-                                <>
-                                    <div
-                                        className="fixed inset-0 z-10"
-                                        onClick={() => setIsProfileOpen(false)}
-                                    />
-                                    <div className="absolute right-0 mt-3 w-72 bg-white dark:bg-neutral-900 rounded-2xl shadow-2xl border border-slate-100 dark:border-neutral-800 py-2 z-20 animate-in fade-in zoom-in-95 duration-200 origin-top-right overflow-hidden">
-                                        <div className="px-5 py-4 border-b border-slate-50 dark:border-neutral-850 bg-slate-50/30 dark:bg-neutral-950/20">
-                                            <div className="flex items-center gap-3 mb-4">
-                                                <div className="w-12 h-12 rounded-xl bg-primary text-white flex items-center justify-center font-bold text-lg shadow-lg shadow-primary/20">
-                                                    {user.first_name?.charAt(0)}
-                                                </div>
-                                                <div className="min-w-0">
-                                                    <p className="text-base font-bold text-slate-900 dark:text-white truncate">{instructorName}</p>
-                                                    <p className="text-xs text-slate-500 dark:text-neutral-450 font-medium truncate capitalize">{user.role}</p>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center justify-between p-3 rounded-xl bg-white dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 shadow-sm">
-                                                <span className="text-[10px] font-black text-slate-400 dark:text-neutral-500 uppercase tracking-widest">Username</span>
-                                                <span className="text-xs font-bold text-primary dark:text-cyan-400 bg-primary/5 dark:bg-cyan-550/15 px-2 py-0.5 rounded-lg border border-primary/10 dark:border-cyan-500/20">
-                                                    @{user.username}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        <div className="p-2">
-                                            <button
-                                                onClick={handleLogout}
-                                                className="w-full flex items-center gap-3 px-4 py-3 text-slate-600 dark:text-neutral-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl transition-all font-bold text-sm group"
-                                            >
-                                                <div className="w-8 h-8 rounded-lg bg-red-50 dark:bg-red-950 text-red-500 flex items-center justify-center group-hover:bg-red-100 dark:group-hover:bg-red-950/50 transition-colors">
-                                                    <LogOut size={18} />
-                                                </div>
-                                                Sign Out
-                                            </button>
-                                        </div>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <button
+                                    type="button"
+                                    className="flex items-center gap-3 rounded-lg p-1 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                    <div className="hidden text-right sm:block">
+                                        <p className="text-xs text-muted-foreground">Instructor</p>
+                                        <p className="text-sm font-medium text-foreground">{user.first_name}</p>
                                     </div>
-                                    </>
-                            )}
-                        </div>
+                                    <Avatar className="h-9 w-9">
+                                        <AvatarFallback className="bg-primary text-primary-foreground text-sm font-medium">
+                                            {user.first_name?.charAt(0)}
+                                        </AvatarFallback>
+                                    </Avatar>
+                                </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-64">
+                                <DropdownMenuLabel className="font-normal">
+                                    <p className="font-medium">{instructorName}</p>
+                                    <p className="text-xs text-muted-foreground capitalize">@{user.username} · {user.role}</p>
+                                </DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem variant="destructive" onClick={handleLogout}>
+                                    <LogOut className="mr-2 h-4 w-4" />
+                                    Sign out
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     </div>
                 </header>
 

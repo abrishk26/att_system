@@ -3,7 +3,7 @@ import { Bar } from 'react-chartjs-2';
 import type { InstructorDashboardMetrics } from '../../../api';
 
 interface EnrichedMetrics extends InstructorDashboardMetrics {
-    course_performance: Array<{ course_id: string; course_name?: string; attendance_rate: number }>;
+    course_performance: Array<{ course_id: string; course_name?: string | null; attendance_rate: number }>;
 }
 
 export default function ComparativeReports({ metrics }: { metrics: EnrichedMetrics | null }) {

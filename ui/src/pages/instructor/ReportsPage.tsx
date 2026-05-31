@@ -1,23 +1,34 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { api } from '../../api';
 import type { Session, AttendanceRecordWithStudent, Course, Class, Assignment } from '../../api';
-import { exportToCSV, exportToPDF } from '../../lib/exportUtils';
+import { exportToCSV, exportInstitutionalPDF, type ReportDocument } from '../../lib/exportUtils';
+import { PageHeader } from '@/components/instructor/PageHeader';
+import { FilterField } from '@/components/instructor/FilterField';
+import { ReportCharts } from '@/components/instructor/reports/ReportCharts';
+import { FileText, Download, BarChart3, Loader2, Table2, LineChart } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import {
-  FileText, Download, Filter, Users, BookOpen, BarChart3,
-  Calendar, Loader2
-} from 'lucide-react';
-import { Button } from "@/components/ui/button";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Progress } from '@/components/ui/progress';
 
-interface StudentAttendanceSummary {
+export interface StudentAttendanceSummary {
   student_id: string;
   student_name: string;
   nfc_id: string;
@@ -29,23 +40,37 @@ interface StudentAttendanceSummary {
   percentage: number;
 }
 
-type ExportFormat = 'csv' | 'pdf';
+export interface SessionStat {
+  id: string;
+  created_at: string;
+  status: string;
+  present: number;
+  absent: number;
+  late: number;
+  excused: number;
+  total: number;
+  rate: number;
+}
+
+function isCompletedSession(status: string) {
+  return status === 'finished' || status === 'completed';
+}
 
 export default function ReportsPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [classes, setClasses] = useState<Class[]>([]);
 
-  // Filters
-  const [selectedCourse, setSelectedCourse] = useState<string>('');
-  const [selectedClass, setSelectedClass] = useState<string>('');
+  const [selectedCourse, setSelectedCourse] = useState('');
+  const [selectedClass, setSelectedClass] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [exportFormat, setExportFormat] = useState<ExportFormat>('pdf');
 
-  // Report data
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessionStats, setSessionStats] = useState<SessionStat[]>([]);
   const [studentSummaries, setStudentSummaries] = useState<StudentAttendanceSummary[]>([]);
+  const [statusCounts, setStatusCounts] = useState({ present: 0, late: 0, absent: 0, excused: 0 });
+
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [reportGenerated, setReportGenerated] = useState(false);
@@ -58,18 +83,19 @@ export default function ReportsPage() {
     try {
       const assignmentsData = await api.instructorAssignments();
       setAssignments(assignmentsData);
-
-      const uniqueCourseIds = Array.from(new Set(assignmentsData.map(a => a.course_id)));
-      const uniqueClassIds = Array.from(new Set(assignmentsData.map(a => a.class_id)));
-
-      const coursesResults = await Promise.allSettled(uniqueCourseIds.map(id => api.courseDetails(id)));
-      const classesResults = await Promise.allSettled(uniqueClassIds.map(id => api.classDetails(id)));
-
+      const uniqueCourseIds = Array.from(new Set(assignmentsData.map((a) => a.course_id)));
+      const uniqueClassIds = Array.from(new Set(assignmentsData.map((a) => a.class_id)));
+      const coursesResults = await Promise.allSettled(uniqueCourseIds.map((id) => api.courseDetails(id)));
+      const classesResults = await Promise.allSettled(uniqueClassIds.map((id) => api.classDetails(id)));
       setCourses(
-        coursesResults.filter((r): r is PromiseFulfilledResult<Course> => r.status === 'fulfilled').map(r => r.value)
+        coursesResults
+          .filter((r): r is PromiseFulfilledResult<Course> => r.status === 'fulfilled')
+          .map((r) => r.value)
       );
       setClasses(
-        classesResults.filter((r): r is PromiseFulfilledResult<Class> => r.status === 'fulfilled').map(r => r.value)
+        classesResults
+          .filter((r): r is PromiseFulfilledResult<Class> => r.status === 'fulfilled')
+          .map((r) => r.value)
       );
     } catch (err) {
       console.error('Failed to load initial data:', err);
@@ -79,8 +105,13 @@ export default function ReportsPage() {
   };
 
   const availableClasses = selectedCourse
-    ? classes.filter(cls => assignments.some(a => a.course_id === selectedCourse && a.class_id === cls.id))
+    ? classes.filter((cls) => assignments.some((a) => a.course_id === selectedCourse && a.class_id === cls.id))
     : [];
+
+  const courseName = courses.find((c) => c.id === selectedCourse)?.name || 'Course';
+  const cls = classes.find((c) => c.id === selectedClass);
+  const classLabel = cls ? `Year ${cls.year} · Section ${cls.section}` : 'Section';
+  const exportPrefix = `report_${courseName.replace(/\s+/g, '_')}`;
 
   const generateReport = async () => {
     if (!selectedCourse || !selectedClass) return;
@@ -88,50 +119,80 @@ export default function ReportsPage() {
     setReportGenerated(false);
 
     try {
-      // Fetch sessions with filters
       const filters: { course_id?: string; class_id?: string; date?: string } = {
         course_id: selectedCourse,
         class_id: selectedClass,
       };
       if (dateFrom) filters.date = dateFrom;
 
-      const sessionsData = await api.instructorSessions(filters);
-
-      // Filter by date range on client side for more precision
-      let filtered = sessionsData;
+      let filtered = await api.instructorSessions(filters);
       if (dateFrom) {
-        filtered = filtered.filter(s => new Date(s.created_at) >= new Date(dateFrom));
+        filtered = filtered.filter((s) => new Date(s.created_at) >= new Date(dateFrom));
       }
       if (dateTo) {
-        const endDate = new Date(dateTo);
-        endDate.setHours(23, 59, 59);
-        filtered = filtered.filter(s => new Date(s.created_at) <= endDate);
+        const end = new Date(dateTo);
+        end.setHours(23, 59, 59);
+        filtered = filtered.filter((s) => new Date(s.created_at) <= end);
       }
 
-      // Only finished sessions for reports
-      const finishedSessions = filtered.filter(s => s.status === 'finished');
+      const finishedSessions = filtered.filter((s) => isCompletedSession(s.status));
       setSessions(finishedSessions);
 
-      // Fetch all records for these sessions
       const allRecords: AttendanceRecordWithStudent[] = [];
+      const stats: SessionStat[] = [];
+
       for (const sess of finishedSessions) {
         try {
           const recs = await api.sessionRecords(sess.id);
           allRecords.push(...recs);
+          let present = 0,
+            absent = 0,
+            late = 0,
+            excused = 0;
+          for (const r of recs) {
+            if (r.status === 'present') present++;
+            else if (r.status === 'absent') absent++;
+            else if (r.status === 'late') late++;
+            else if (r.status === 'excused') excused++;
+          }
+          const total = recs.length;
+          stats.push({
+            id: sess.id,
+            created_at: sess.created_at,
+            status: sess.status,
+            present,
+            absent,
+            late,
+            excused,
+            total,
+            rate: total > 0 ? Math.round(((present + late) / total) * 100) : 0,
+          });
         } catch {
-          // Skip failed sessions
+          /* skip */
         }
       }
+      setSessionStats(stats);
 
-      // Build per-student summaries
+      const totals = { present: 0, late: 0, absent: 0, excused: 0 };
       const studentMap = new Map<string, StudentAttendanceSummary>();
+
       for (const rec of allRecords) {
+        totals.present += rec.status === 'present' ? 1 : 0;
+        totals.late += rec.status === 'late' ? 1 : 0;
+        totals.absent += rec.status === 'absent' ? 1 : 0;
+        totals.excused += rec.status === 'excused' ? 1 : 0;
+
         if (!studentMap.has(rec.student_id)) {
           studentMap.set(rec.student_id, {
             student_id: rec.student_id,
             student_name: rec.student_name,
             nfc_id: rec.nfc_id,
-            total: 0, present: 0, absent: 0, late: 0, excused: 0, percentage: 0,
+            total: 0,
+            present: 0,
+            absent: 0,
+            late: 0,
+            excused: 0,
+            percentage: 0,
           });
         }
         const entry = studentMap.get(rec.student_id)!;
@@ -142,12 +203,13 @@ export default function ReportsPage() {
         else if (rec.status === 'excused') entry.excused += 1;
       }
 
-      const summaries = Array.from(studentMap.values()).map(s => ({
+      setStatusCounts(totals);
+
+      const summaries = Array.from(studentMap.values()).map((s) => ({
         ...s,
         percentage: s.total > 0 ? Math.round(((s.present + s.late) / s.total) * 100) : 0,
       }));
       summaries.sort((a, b) => b.percentage - a.percentage);
-
       setStudentSummaries(summaries);
       setReportGenerated(true);
     } catch (err) {
@@ -157,350 +219,414 @@ export default function ReportsPage() {
     }
   };
 
-  const exportReport = () => {
-    const courseName = courses.find(c => c.id === selectedCourse)?.name || 'Unknown';
-    const cls = classes.find(c => c.id === selectedClass);
-    const classLabel = cls ? `Year ${cls.year} Section ${cls.section}` : 'Unknown';
-    const filename = `attendance_report_${courseName}_${classLabel}_${new Date().toISOString().slice(0, 10)}`;
-
-    const data = studentSummaries.map(s => ({
-      'Student Name': s.student_name,
-      'NFC ID': s.nfc_id,
-      'Total Sessions': s.total,
-      'Present': s.present,
-      'Late': s.late,
-      'Absent': s.absent,
-      'Excused': s.excused,
-      'Attendance %': `${s.percentage}%`,
-    }));
-
-    if (exportFormat === 'csv') {
-      exportToCSV(data, filename);
-    } else {
-      const columns = [
-        { header: 'Student Name', dataKey: 'Student Name' },
-        { header: 'NFC ID', dataKey: 'NFC ID' },
-        { header: 'Total', dataKey: 'Total Sessions' },
-        { header: 'Present', dataKey: 'Present' },
-        { header: 'Late', dataKey: 'Late' },
-        { header: 'Absent', dataKey: 'Absent' },
-        { header: 'Excused', dataKey: 'Excused' },
-        { header: 'Rate', dataKey: 'Attendance %' },
-      ];
-      exportToPDF(`Attendance Report — ${courseName} (${classLabel})`, columns, data, filename);
-    }
-  };
-
-  const exportSessionDetail = () => {
-    const courseName = courses.find(c => c.id === selectedCourse)?.name || 'Unknown';
-    const cls = classes.find(c => c.id === selectedClass);
-    const classLabel = cls ? `Year ${cls.year} Section ${cls.section}` : 'Unknown';
-    const filename = `session_detail_${courseName}_${classLabel}_${new Date().toISOString().slice(0, 10)}`;
-
-    const data = sessions.map(s => ({
-      'Session ID': s.id.substring(0, 8),
-      'Status': s.status,
-      'Date': new Date(s.created_at).toLocaleDateString(),
-      'Time': new Date(s.created_at).toLocaleTimeString(),
-    }));
-
-    if (exportFormat === 'csv') {
-      exportToCSV(data, filename);
-    } else {
-      const columns = [
-        { header: 'Session ID', dataKey: 'Session ID' },
-        { header: 'Status', dataKey: 'Status' },
-        { header: 'Date', dataKey: 'Date' },
-        { header: 'Time', dataKey: 'Time' },
-      ];
-      exportToPDF(`Session Detail — ${courseName} (${classLabel})`, columns, data, filename);
-    }
-  };
-
-  // Stats
   const totalStudents = studentSummaries.length;
-  const avgAttendance = totalStudents > 0
-    ? Math.round(studentSummaries.reduce((sum, s) => sum + s.percentage, 0) / totalStudents)
-    : 0;
-  const atRisk = studentSummaries.filter(s => s.percentage < 75).length;
-  const perfect = studentSummaries.filter(s => s.percentage === 100).length;
+  const avgAttendance =
+    totalStudents > 0
+      ? Math.round(studentSummaries.reduce((sum, s) => sum + s.percentage, 0) / totalStudents)
+      : 0;
+  const atRisk = studentSummaries.filter((s) => s.percentage < 75).length;
+  const perfect = studentSummaries.filter((s) => s.percentage === 100).length;
+
+  const bandCounts = useMemo(
+    () => ({
+      excellent: studentSummaries.filter((s) => s.percentage >= 85).length,
+      satisfactory: studentSummaries.filter((s) => s.percentage >= 75 && s.percentage < 85).length,
+      atRisk: studentSummaries.filter((s) => s.percentage < 75).length,
+    }),
+    [studentSummaries]
+  );
+
+  const chartStudents = useMemo(() => {
+    const top = [...studentSummaries].sort((a, b) => b.percentage - a.percentage).slice(0, 12);
+    return {
+      labels: top.map((s) => s.student_name.split(' ')[0] || s.student_name),
+      rates: top.map((s) => s.percentage),
+    };
+  }, [studentSummaries]);
+
+  const chartSessions = useMemo(() => {
+    const sorted = [...sessionStats].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+    return {
+      labels: sorted.map((s) =>
+        new Date(s.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      ),
+      rates: sorted.map((s) => s.rate),
+    };
+  }, [sessionStats]);
+
+  const exportStudentsCsv = () => {
+    exportToCSV(
+      studentSummaries.map((s) => ({
+        Student: s.student_name,
+        'NFC ID': s.nfc_id,
+        'Total marks': s.total,
+        Present: s.present,
+        Late: s.late,
+        Absent: s.absent,
+        Excused: s.excused,
+        'Attendance %': s.percentage,
+      })),
+      `${exportPrefix}_students`
+    );
+  };
+
+  const exportSessionsCsv = () => {
+    exportToCSV(
+      sessionStats.map((s) => ({
+        'Session ID': s.id.substring(0, 8),
+        Date: new Date(s.created_at).toLocaleString(),
+        Status: s.status,
+        Present: s.present,
+        Late: s.late,
+        Absent: s.absent,
+        Excused: s.excused,
+        Total: s.total,
+        'Attendance %': s.rate,
+      })),
+      `${exportPrefix}_sessions`
+    );
+  };
+
+  const exportFullPdf = () => {
+    const dateRange =
+      dateFrom && dateTo ? `${dateFrom} to ${dateTo}` : dateFrom ? `from ${dateFrom}` : dateTo ? `until ${dateTo}` : 'all dates';
+
+    const doc: ReportDocument = {
+      title: 'Section Attendance Analytics Report',
+      subtitle: `${courseName} — ${classLabel} · ${dateRange}`,
+      generated_at: new Date().toISOString(),
+      executive_summary: `Analysis of ${sessions.length} completed session(s) for ${totalStudents} students. Average attendance is ${avgAttendance}%. Status breakdown: ${statusCounts.present} present, ${statusCounts.late} late, ${statusCounts.absent} absent, ${statusCounts.excused} excused. ${atRisk} student(s) are below 75% and ${perfect} have perfect attendance. Export chart images separately as PNG from the Charts tab.`,
+      kpis: [
+        {
+          title: 'Key metrics',
+          items: [
+            ['Sessions', String(sessions.length)],
+            ['Students', String(totalStudents)],
+            ['Avg attendance', `${avgAttendance}%`],
+            ['At risk', String(atRisk)],
+            ['Perfect', String(perfect)],
+          ],
+        },
+        {
+          title: 'Performance bands',
+          items: [
+            ['Excellent (≥85%)', String(bandCounts.excellent)],
+            ['Satisfactory (75–84%)', String(bandCounts.satisfactory)],
+            ['At risk (<75%)', String(bandCounts.atRisk)],
+          ],
+        },
+      ],
+      tables: [
+        {
+          title: 'Student attendance summary',
+          columns: ['Student', 'NFC', 'Total', 'Present', 'Late', 'Absent', 'Excused', 'Rate'],
+          rows: studentSummaries.map((s) => [
+            s.student_name,
+            s.nfc_id,
+            String(s.total),
+            String(s.present),
+            String(s.late),
+            String(s.absent),
+            String(s.excused),
+            `${s.percentage}%`,
+          ]),
+        },
+        {
+          title: 'Session breakdown',
+          columns: ['Session', 'Date', 'Present', 'Late', 'Absent', 'Excused', 'Rate'],
+          rows: sessionStats.map((s) => [
+            s.id.substring(0, 8),
+            new Date(s.created_at).toLocaleDateString(),
+            String(s.present),
+            String(s.late),
+            String(s.absent),
+            String(s.excused),
+            `${s.rate}%`,
+          ]),
+        },
+      ],
+    };
+    exportInstitutionalPDF(doc, exportPrefix);
+  };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      <div className="flex min-h-[400px] items-center justify-center">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 animate-fade-in">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-3">
-          <FileText className="text-primary" size={32} />
-          Attendance Reports
-        </h1>
-        <p className="text-slate-500 mt-1 font-medium">Generate per-section and per-student attendance reports with export capabilities</p>
-      </div>
+    <div className="mx-auto max-w-7xl space-y-8">
+      <PageHeader
+        title="Reports & analytics"
+        description="Generate charts and tables from real attendance data. Export tables as CSV/PDF and each chart as PNG."
+        icon={<FileText className="h-5 w-5" />}
+      />
 
-      {/* Report Configuration */}
-      <Card className="border-slate-100 shadow-sm">
-        <CardHeader className="pb-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-primary/10 rounded-xl">
-              <Filter size={18} className="text-primary" />
-            </div>
-            <div>
-              <CardTitle className="text-lg">Report Configuration</CardTitle>
-              <CardDescription>Select course, class, and date range for your report</CardDescription>
-            </div>
-          </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Parameters</CardTitle>
+          <CardDescription>Select course, section, and date range, then generate.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Course */}
-            <div className="space-y-2">
-              <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                <BookOpen size={12} className="inline mr-1" /> Course
-              </Label>
-              <Select value={selectedCourse} onValueChange={(v) => { setSelectedCourse(v); setSelectedClass(''); setReportGenerated(false); }}>
-                <SelectTrigger className="h-11 rounded-xl border-slate-100 bg-slate-50 font-bold">
-                  <SelectValue placeholder="Select course..." />
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-end gap-4">
+            <FilterField label="Course">
+              <Select
+                value={selectedCourse}
+                onValueChange={(v) => {
+                  setSelectedCourse(v);
+                  setSelectedClass('');
+                  setReportGenerated(false);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select course" />
                 </SelectTrigger>
-                <SelectContent className="rounded-xl">
-                  {courses.map(c => (
-                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                <SelectContent>
+                  {courses.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-
-            {/* Class */}
-            <div className="space-y-2">
-              <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                <Users size={12} className="inline mr-1" /> Class Section
-              </Label>
-              <Select value={selectedClass} disabled={!selectedCourse} onValueChange={(v) => { setSelectedClass(v); setReportGenerated(false); }}>
-                <SelectTrigger className="h-11 rounded-xl border-slate-100 bg-slate-50 font-bold">
-                  <SelectValue placeholder={!selectedCourse ? "Select course first" : "Select class..."} />
+            </FilterField>
+            <FilterField label="Section">
+              <Select
+                value={selectedClass}
+                disabled={!selectedCourse}
+                onValueChange={(v) => {
+                  setSelectedClass(v);
+                  setReportGenerated(false);
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={!selectedCourse ? 'Select course first' : 'Select section'} />
                 </SelectTrigger>
-                <SelectContent className="rounded-xl">
-                  {availableClasses.map(cls => (
-                    <SelectItem key={cls.id} value={cls.id}>Year {cls.year} - Section {cls.section}</SelectItem>
+                <SelectContent>
+                  {availableClasses.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      Year {c.year} · Section {c.section}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-
-            {/* Date From */}
-            <div className="space-y-2">
-              <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                <Calendar size={12} className="inline mr-1" /> From Date
-              </Label>
-              <Input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => { setDateFrom(e.target.value); setReportGenerated(false); }}
-                className="h-11 rounded-xl border-slate-100 bg-slate-50 font-bold"
-              />
-            </div>
-
-            {/* Date To */}
-            <div className="space-y-2">
-              <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                <Calendar size={12} className="inline mr-1" /> To Date
-              </Label>
-              <Input
-                type="date"
-                value={dateTo}
-                onChange={(e) => { setDateTo(e.target.value); setReportGenerated(false); }}
-                className="h-11 rounded-xl border-slate-100 bg-slate-50 font-bold"
-              />
-            </div>
+            </FilterField>
+            <FilterField label="From">
+              <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setReportGenerated(false); }} />
+            </FilterField>
+            <FilterField label="To">
+              <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setReportGenerated(false); }} />
+            </FilterField>
           </div>
-
-          <div className="flex items-center justify-between gap-4 pt-2">
-            <div className="flex items-center gap-3">
-              <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Export Format</Label>
-              <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as ExportFormat)}>
-                <SelectTrigger className="h-9 w-28 rounded-lg border-slate-100 bg-slate-50 font-bold text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="rounded-lg">
-                  <SelectItem value="pdf">PDF</SelectItem>
-                  <SelectItem value="csv">CSV</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <Button
-              onClick={generateReport}
-              disabled={!selectedCourse || !selectedClass || generating}
-              className="h-12 px-8 rounded-2xl font-bold shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
-            >
+          <div className="flex justify-end border-t border-border pt-4">
+            <Button onClick={generateReport} disabled={!selectedCourse || !selectedClass || generating}>
               {generating ? (
-                <><Loader2 size={18} className="animate-spin mr-2" /> Generating...</>
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating…
+                </>
               ) : (
-                <><BarChart3 size={18} className="mr-2" /> Generate Report</>
+                <>
+                  <BarChart3 className="mr-2 h-4 w-4" /> Generate report
+                </>
               )}
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Report Results */}
       {reportGenerated && (
-        <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
-          {/* Stats Overview */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card className="border-none shadow-sm bg-primary text-white">
-              <CardContent className="p-5 text-center">
-                <p className="text-[10px] font-black uppercase tracking-widest text-primary-foreground/60">Sessions Analyzed</p>
-                <p className="text-3xl font-black mt-1">{sessions.length}</p>
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-xs text-muted-foreground">Sessions</p>
+                <p className="text-2xl font-semibold">{sessions.length}</p>
               </CardContent>
             </Card>
-            <Card className="border-slate-100 shadow-sm">
-              <CardContent className="p-5 text-center">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Avg Attendance</p>
-                <p className="text-3xl font-black mt-1 text-slate-900">{avgAttendance}%</p>
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-xs text-muted-foreground">Avg attendance</p>
+                <p className="text-2xl font-semibold">{avgAttendance}%</p>
               </CardContent>
             </Card>
-            <Card className="border-slate-100 shadow-sm">
-              <CardContent className="p-5 text-center">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">At Risk</p>
-                <p className="text-3xl font-black mt-1 text-rose-500">{atRisk}</p>
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-xs text-muted-foreground">At risk (&lt;75%)</p>
+                <p className="text-2xl font-semibold text-amber-600">{atRisk}</p>
               </CardContent>
             </Card>
-            <Card className="border-slate-100 shadow-sm">
-              <CardContent className="p-5 text-center">
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Perfect Attendance</p>
-                <p className="text-3xl font-black mt-1 text-emerald-500">{perfect}</p>
+            <Card>
+              <CardContent className="pt-6">
+                <p className="text-xs text-muted-foreground">Perfect attendance</p>
+                <p className="text-2xl font-semibold text-emerald-600">{perfect}</p>
               </CardContent>
             </Card>
           </div>
 
-          <Tabs defaultValue="students" className="w-full">
-            <div className="flex items-center justify-between mb-4">
-              <TabsList className="bg-slate-100/50 p-1">
-                <TabsTrigger value="students">Per-Student Report</TabsTrigger>
-                <TabsTrigger value="sessions">Session Details</TabsTrigger>
-              </TabsList>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" onClick={exportReport} className="rounded-xl font-bold gap-2">
-                  <Download size={16} /> Export Students
+          <Card className="border-primary/20 bg-primary/5">
+            <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{courseName}</span> · {classLabel} — {totalStudents}{' '}
+                students, {sessions.length} sessions analyzed.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={exportStudentsCsv}>
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> Students CSV
                 </Button>
-                <Button variant="outline" onClick={exportSessionDetail} className="rounded-xl font-bold gap-2">
-                  <Download size={16} /> Export Sessions
+                <Button variant="outline" size="sm" onClick={exportSessionsCsv}>
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> Sessions CSV
+                </Button>
+                <Button size="sm" onClick={exportFullPdf}>
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> Full PDF
                 </Button>
               </div>
-            </div>
+            </CardContent>
+          </Card>
 
-            <TabsContent value="students">
-              <Card className="border-slate-50 shadow-sm overflow-hidden">
-                <Table>
-                  <TableHeader className="bg-slate-50/50">
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="font-bold text-slate-500 pl-6">Student</TableHead>
-                      <TableHead className="font-bold text-slate-500 text-center">Total</TableHead>
-                      <TableHead className="font-bold text-slate-500 text-center">Present</TableHead>
-                      <TableHead className="font-bold text-slate-500 text-center">Late</TableHead>
-                      <TableHead className="font-bold text-slate-500 text-center">Absent</TableHead>
-                      <TableHead className="font-bold text-slate-500 text-center">Excused</TableHead>
-                      <TableHead className="font-bold text-slate-500 text-right pr-6">Rate</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {studentSummaries.map((s) => (
-                      <TableRow key={s.student_id} className="hover:bg-slate-50/50 transition-colors group">
-                        <TableCell className="pl-6">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400 font-bold group-hover:bg-primary/5 group-hover:text-primary transition-colors">
-                              {s.student_name.charAt(0)}
-                            </div>
-                            <div>
-                              <span className="font-bold text-slate-900 text-sm">{s.student_name}</span>
-                              <p className="text-[10px] text-slate-400 font-mono">{s.nfc_id}</p>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center font-bold text-slate-600">{s.total}</TableCell>
-                        <TableCell className="text-center">
-                          <span className="text-emerald-600 font-bold">{s.present}</span>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span className="text-amber-600 font-bold">{s.late}</span>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span className="text-rose-600 font-bold">{s.absent}</span>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span className="text-blue-600 font-bold">{s.excused}</span>
-                        </TableCell>
-                        <TableCell className="text-right pr-6">
-                          <Badge
-                            variant="outline"
-                            className={`font-bold ${
-                              s.percentage >= 85 ? 'border-emerald-100 text-emerald-600' :
-                              s.percentage >= 75 ? 'border-amber-100 text-amber-600' :
-                              'border-rose-100 text-rose-600'
-                            }`}
-                          >
-                            {s.percentage}%
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {studentSummaries.length === 0 && (
+          <Tabs defaultValue="charts" className="w-full">
+            <TabsList className="grid w-full max-w-md grid-cols-3">
+              <TabsTrigger value="charts" className="gap-1.5">
+                <LineChart className="h-3.5 w-3.5" /> Charts
+              </TabsTrigger>
+              <TabsTrigger value="students" className="gap-1.5">
+                <Table2 className="h-3.5 w-3.5" /> Students
+              </TabsTrigger>
+              <TabsTrigger value="sessions" className="gap-1.5">
+                <Table2 className="h-3.5 w-3.5" /> Sessions
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="charts" className="mt-6 space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Use the PNG button on each chart to export graphs for slides or printing.
+              </p>
+              <ReportCharts
+                studentLabels={chartStudents.labels}
+                studentRates={chartStudents.rates}
+                sessionLabels={chartSessions.labels}
+                sessionRates={chartSessions.rates}
+                statusCounts={statusCounts}
+                bandCounts={bandCounts}
+                exportPrefix={exportPrefix}
+              />
+            </TabsContent>
+
+            <TabsContent value="students" className="mt-6">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">Student attendance table</CardTitle>
+                    <CardDescription>Per-student totals across all analyzed sessions.</CardDescription>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={exportStudentsCsv}>
+                    <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
+                  </Button>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-12 text-slate-400 font-medium">
-                          No attendance data found for the selected filters.
-                        </TableCell>
+                        <TableHead>Student</TableHead>
+                        <TableHead className="text-center">Present</TableHead>
+                        <TableHead className="text-center">Late</TableHead>
+                        <TableHead className="text-center">Absent</TableHead>
+                        <TableHead className="text-center">Excused</TableHead>
+                        <TableHead className="w-[140px]">Rate</TableHead>
                       </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {studentSummaries.map((s) => (
+                        <TableRow key={s.student_id}>
+                          <TableCell>
+                            <p className="font-medium">{s.student_name}</p>
+                            <p className="text-xs text-muted-foreground font-mono">{s.nfc_id}</p>
+                          </TableCell>
+                          <TableCell className="text-center text-emerald-600">{s.present}</TableCell>
+                          <TableCell className="text-center text-amber-600">{s.late}</TableCell>
+                          <TableCell className="text-center text-red-600">{s.absent}</TableCell>
+                          <TableCell className="text-center text-blue-600">{s.excused}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Progress value={s.percentage} className="h-2 flex-1" />
+                              <span className="w-10 text-right text-sm font-medium">{s.percentage}%</span>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
               </Card>
             </TabsContent>
 
-            <TabsContent value="sessions">
-              <Card className="border-slate-50 shadow-sm overflow-hidden">
-                <Table>
-                  <TableHeader className="bg-slate-50/50">
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="font-bold text-slate-500 pl-6">Session ID</TableHead>
-                      <TableHead className="font-bold text-slate-500 text-center">Status</TableHead>
-                      <TableHead className="font-bold text-slate-500 text-right pr-6">Date & Time</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sessions.map((s) => (
-                      <TableRow key={s.id} className="hover:bg-slate-50/50 transition-colors">
-                        <TableCell className="pl-6 font-mono text-xs text-slate-500">{s.id.substring(0, 8)}</TableCell>
-                        <TableCell className="text-center">
-                          <Badge variant="secondary" className="text-[10px] uppercase">{s.status}</Badge>
-                        </TableCell>
-                        <TableCell className="text-right pr-6">
-                          <div className="flex flex-col items-end">
-                            <span className="font-bold text-sm text-slate-900">
-                              {new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                            </span>
-                            <span className="text-[10px] text-slate-400">
-                              {new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {sessions.length === 0 && (
+            <TabsContent value="sessions" className="mt-6">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">Session breakdown table</CardTitle>
+                    <CardDescription>Attendance counts and rate for each completed session.</CardDescription>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={exportSessionsCsv}>
+                    <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
+                  </Button>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
                       <TableRow>
-                        <TableCell colSpan={3} className="text-center py-12 text-slate-400 font-medium">
-                          No completed sessions found for the selected filters.
-                        </TableCell>
+                        <TableHead>Date</TableHead>
+                        <TableHead className="text-center">Present</TableHead>
+                        <TableHead className="text-center">Late</TableHead>
+                        <TableHead className="text-center">Absent</TableHead>
+                        <TableHead className="text-center">Excused</TableHead>
+                        <TableHead className="text-center">Total</TableHead>
+                        <TableHead className="text-right">Rate</TableHead>
                       </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {sessionStats.map((s) => (
+                        <TableRow key={s.id}>
+                          <TableCell>
+                            <p className="font-medium">
+                              {new Date(s.created_at).toLocaleDateString(undefined, {
+                                weekday: 'short',
+                                month: 'short',
+                                day: 'numeric',
+                              })}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {new Date(s.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          </TableCell>
+                          <TableCell className="text-center">{s.present}</TableCell>
+                          <TableCell className="text-center">{s.late}</TableCell>
+                          <TableCell className="text-center">{s.absent}</TableCell>
+                          <TableCell className="text-center">{s.excused}</TableCell>
+                          <TableCell className="text-center">{s.total}</TableCell>
+                          <TableCell className="text-right">
+                            <Badge
+                              variant="outline"
+                              className={
+                                s.rate >= 85
+                                  ? 'border-emerald-200 text-emerald-700'
+                                  : s.rate >= 75
+                                    ? 'border-amber-200 text-amber-700'
+                                    : 'border-red-200 text-red-700'
+                              }
+                            >
+                              {s.rate}%
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
               </Card>
             </TabsContent>
           </Tabs>

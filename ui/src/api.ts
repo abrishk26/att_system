@@ -180,7 +180,7 @@ export interface InstructorDashboardMetrics {
     total_students: number;
   };
   trends: Array<{ date: string; rate: number }>;
-  course_performance: Array<{ course_id: string; attendance_rate: number }>;
+  course_performance: Array<{ course_id: string; course_name?: string | null; attendance_rate: number }>;
 }
 
 export interface StudentDashboardMetrics {

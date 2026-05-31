@@ -1,46 +1,38 @@
 import { useState, useEffect } from 'react';
 import {
     Plus,
-    CheckCircle2,
-    XCircle,
-    Clock,
-    Users,
-    ChevronRight,
-    Search,
-    AlertCircle,
+    ArrowRight,
     History,
-    CalendarDays,
-    BookOpen
+    UserCheck,
 } from 'lucide-react';
-import { api, type PermissionWithStudent, type Session, type AttendanceRecordWithStudent, type Course, type Class, type Assignment } from '../../api';
+import { api, type PermissionWithStudent, type Session, type AttendanceRecordWithStudent, type Course, type Class, type Assignment, type EnrichedAssignment } from '../../api';
 import { useAuth } from '../../AuthContext';
-
-// Shadcn UI Imports
-import { Button } from "@/components/ui/button"
+import { Button } from '@/components/ui/button';
 import {
     Dialog,
     DialogContent,
     DialogDescription,
     DialogHeader,
     DialogTitle,
-} from "@/components/ui/dialog"
+} from '@/components/ui/dialog';
 import {
     Select,
     SelectContent,
     SelectItem,
     SelectTrigger,
     SelectValue,
-} from "@/components/ui/select"
-import { Label } from "@/components/ui/label"
-import { DateTimePicker } from "@/components/ui/date-time-picker"
+} from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
+import { PageHeader } from '@/components/instructor/PageHeader';
+import { FilterField } from '@/components/instructor/FilterField';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { NewSessionDialog } from '@/components/instructor/attendance/NewSessionDialog';
+import { AttendanceRoster } from '@/components/instructor/attendance/AttendanceRoster';
+import { Separator } from '@/components/ui/separator';
 
-import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
-import { Input } from "@/components/ui/input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination"
-
-// Local types if needed, otherwise use imported ones
 interface ClassDetail extends Class {}
 
 export default function AttendancePage() {
@@ -49,9 +41,9 @@ export default function AttendancePage() {
     const [selectedSession, setSelectedSession] = useState<Session | null>(null);
     const [records, setRecords] = useState<AttendanceRecordWithStudent[]>([]);
     const [loading, setLoading] = useState(true);
+    const [rosterLoading, setRosterLoading] = useState(false);
     const [actionLoading, setActionLoading] = useState(false);
 
-    // New Session Form State
     const [assignments, setAssignments] = useState<Assignment[]>([]);
     const [courses, setCourses] = useState<Course[]>([]);
     const [classes, setClasses] = useState<ClassDetail[]>([]);
@@ -60,10 +52,7 @@ export default function AttendancePage() {
     const [showNewForm, setShowNewForm] = useState(false);
     const [viewingPermission, setViewingPermission] = useState<PermissionWithStudent | null>(null);
 
-    // Filter State
     const [filters, setFilters] = useState<{ course_id?: string; class_id?: string; date?: string }>({});
-
-    // Pagination State
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 6;
 
@@ -73,31 +62,33 @@ export default function AttendancePage() {
 
     const fetchInitialData = async () => {
         try {
-            const assignmentsData = await api.instructorAssignments();
-            setAssignments(assignmentsData);
-            
+            const enriched = await api.enrichedAssignments();
+            setAssignments(enriched);
+
+            const courseMap = new Map<string, Course>();
+            const classMap = new Map<string, ClassDetail>();
+            enriched.forEach((a: EnrichedAssignment) => {
+                if (!courseMap.has(a.course_id)) {
+                    courseMap.set(a.course_id, {
+                        id: a.course_id,
+                        course_id: a.course_code,
+                        name: a.course_name,
+                    });
+                }
+                if (!classMap.has(a.class_id)) {
+                    classMap.set(a.class_id, {
+                        id: a.class_id,
+                        year: a.class_year,
+                        section: a.class_section,
+                    });
+                }
+            });
+            setCourses(Array.from(courseMap.values()));
+            setClasses(Array.from(classMap.values()));
+
             await fetchSessions();
-
-            // Extract courses and classes from assignments
-            const uniqueCourseIds = Array.from(new Set(assignmentsData.map((a: Assignment) => a.course_id)));
-            const uniqueClassIds = Array.from(new Set(assignmentsData.map((a: Assignment) => a.class_id)));
-
-            // Fetch course and class details sequentially or with allSettled to be more robust
-            const coursesResults = await Promise.allSettled(uniqueCourseIds.map(id => api.request<Course>(`/course/${id}`)));
-            const classesResults = await Promise.allSettled(uniqueClassIds.map(id => api.request<ClassDetail>(`/class/${id}`)));
-
-            const successfulCourses = coursesResults
-                .filter((r): r is PromiseFulfilledResult<Course> => r.status === 'fulfilled')
-                .map(r => r.value);
-
-            const successfulClasses = classesResults
-                .filter((r): r is PromiseFulfilledResult<ClassDetail> => r.status === 'fulfilled')
-                .map(r => r.value);
-
-            setCourses(successfulCourses);
-            setClasses(successfulClasses);
         } catch (error) {
-            console.error("Failed to fetch initial data:", error);
+            console.error('Failed to fetch initial data:', error);
         } finally {
             setLoading(false);
         }
@@ -106,11 +97,14 @@ export default function AttendancePage() {
     const fetchSessions = async () => {
         try {
             const sessionsData = await api.instructorSessions(filters);
-            setSessions(sessionsData.sort((a: Session, b: Session) =>
-                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-            ));
+            setSessions(
+                sessionsData.sort(
+                    (a: Session, b: Session) =>
+                        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                )
+            );
         } catch (error) {
-            console.error("Failed to fetch sessions:", error);
+            console.error('Failed to fetch sessions:', error);
         }
     };
 
@@ -118,13 +112,6 @@ export default function AttendancePage() {
         if (!loading) fetchSessions();
         setCurrentPage(1);
     }, [filters]);
-
-    // Filter classes based on selected course
-    const availableClasses = newSession.course_id
-        ? classes.filter(cls =>
-            assignments.some(a => a.course_id === newSession.course_id && a.class_id === cls.id)
-        )
-        : [];
 
     const handleCreateSession = async () => {
         if (!newSession.course_id || !newSession.class_id) return;
@@ -135,22 +122,26 @@ export default function AttendancePage() {
                 method: 'POST',
                 body: JSON.stringify({
                     instructor_id: user?.id,
-                    ...newSession
-                })
+                    ...newSession,
+                }),
             });
 
             await api.request('/record/create', {
                 method: 'POST',
-                body: JSON.stringify({ session_id: session.id })
+                body: JSON.stringify({ session_id: session.id }),
             });
 
-            const mockSession = { ...session, created_at: sessionDate?.toISOString() || new Date().toISOString() };
+            const mockSession = {
+                ...session,
+                created_at: sessionDate?.toISOString() || new Date().toISOString(),
+            };
 
             setSessions([mockSession, ...sessions]);
             setShowNewForm(false);
             setNewSession({ course_id: '', class_id: '' });
+            await handleSelectSession(mockSession);
         } catch (error) {
-            console.error("Failed to create session:", error);
+            console.error('Failed to create session:', error);
         } finally {
             setActionLoading(false);
         }
@@ -158,568 +149,431 @@ export default function AttendancePage() {
 
     const handleSelectSession = async (session: Session) => {
         setSelectedSession(session);
-        setLoading(true);
+        setRosterLoading(true);
         try {
-            const recordsData: AttendanceRecordWithStudent[] = await api.sessionRecords(session.id);
+            const recordsData = await api.sessionRecords(session.id);
             setRecords(recordsData);
         } catch (error) {
-            console.error("Failed to fetch records:", error);
+            console.error('Failed to fetch records:', error);
         } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleUpdateStatus = async (recordId: string, status: string) => {
-        try {
-            await api.request('/record/update', {
-                method: 'PATCH',
-                body: JSON.stringify({
-                    session_id: selectedSession?.id,
-                    nfc_id: records.find(r => r.id === recordId)?.nfc_id,
-                    status: status
-                })
-            });
-
-            setRecords(records.map(r => r.id === recordId ? { ...r, status: status as any } : r));
-        } catch (error) {
-            console.error("Failed to update status:", error);
+            setRosterLoading(false);
         }
     };
 
     const handleUpdatePermission = async (id: string, status: 'accepted' | 'rejected') => {
         try {
             await api.updatePermission(id, status);
-            // Refresh permissions
-            // (Removed permission refresh from here as the tab is gone)
             if (viewingPermission?.id === id) {
-                setViewingPermission(prev => prev ? ({ ...prev, status } as PermissionWithStudent) : null);
+                setViewingPermission((prev) =>
+                    prev ? ({ ...prev, status } as PermissionWithStudent) : null
+                );
             }
         } catch (error) {
-            console.error("Failed to update permission:", error);
+            console.error('Failed to update permission:', error);
         }
     };
 
     if (loading && !selectedSession) {
         return (
-            <div className="flex items-center justify-center min-h-[400px]">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+            <div className="flex min-h-[400px] items-center justify-center">
+                <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-primary" />
             </div>
         );
     }
 
+    const selectedCourse = selectedSession
+        ? courses.find((c) => c.id === selectedSession.course_id)
+        : undefined;
+    const selectedClass = selectedSession
+        ? classes.find((c) => c.id === selectedSession.class_id)
+        : undefined;
+
     return (
-        <div className="space-y-8 animate-fade-in">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Attendance Management</h1>
-                    <p className="text-slate-500 mt-1 font-medium">Track and manage student presence in your sessions</p>
-                </div>
-
-                <Button
-                    onClick={() => setShowNewForm(true)}
-                    className="flex items-center gap-2 bg-primary text-white h-13 px-8 rounded-2xl font-bold shadow-xl shadow-primary/20 hover:scale-[1.03] active:scale-[0.98] transition-all"
-                >
-                    <Plus size={20} />
-                    Start New Session
-                </Button>
-            </div>
-
-            {/* Selection/View Layer */}
-            {!selectedSession ? (
-                <div className="space-y-6">
-                    {/* Filters Bar */}
-                    <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm flex flex-wrap items-end gap-4">
-                        <div className="space-y-2 flex-1 min-w-[200px]">
-                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Course Filter</Label>
-                            <Select 
-                                value={filters.course_id || "all"} 
-                                onValueChange={(v) => setFilters(prev => ({ ...prev, course_id: v === "all" ? undefined : v, class_id: undefined }))}
-                            >
-                                <SelectTrigger className="h-11 rounded-xl border-slate-100 bg-slate-50 font-bold px-4">
-                                    <SelectValue placeholder="All Courses" />
-                                </SelectTrigger>
-                                <SelectContent className="rounded-xl border-slate-100">
-                                    <SelectItem value="all">All Courses</SelectItem>
-                                    {courses.map(course => (
-                                        <SelectItem key={course.id} value={course.id}>{course.name}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="space-y-2 flex-1 min-w-[200px]">
-                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Class Filter</Label>
-                            <Select 
-                                value={filters.class_id || "all"} 
-                                disabled={!filters.course_id}
-                                onValueChange={(v) => setFilters(prev => ({ ...prev, class_id: v === "all" ? undefined : v }))}
-                            >
-                                <SelectTrigger className="h-11 rounded-xl border-slate-100 bg-slate-50 font-bold px-4">
-                                    <SelectValue placeholder={!filters.course_id ? "Select course first" : "All Classes"} />
-                                </SelectTrigger>
-                                <SelectContent className="rounded-xl border-slate-100">
-                                    <SelectItem value="all">All Classes</SelectItem>
-                                    {classes
-                                        .filter(cls => assignments.some(a => a.course_id === filters.course_id && a.class_id === cls.id))
-                                        .map(cls => (
-                                            <SelectItem key={cls.id} value={cls.id}>Year {cls.year} - Section {cls.section}</SelectItem>
-                                        ))
-                                    }
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        <div className="space-y-2 flex-1 min-w-[150px]">
-                            <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Date Filter</Label>
-                            <Input 
-                                type="date" 
-                                value={filters.date || ""} 
-                                onChange={(e) => setFilters(prev => ({ ...prev, date: e.target.value || undefined }))}
-                                className="h-11 rounded-xl border-slate-100 bg-slate-50 font-bold px-4"
-                            />
-                        </div>
-
-                        <Button 
-                            variant="ghost" 
-                            onClick={() => setFilters({})}
-                            className="h-11 px-6 rounded-xl text-slate-400 hover:text-slate-600 font-bold"
-                        >
-                            Clear
+        <div className="animate-fade-in space-y-8">
+            {!selectedSession && (
+                <PageHeader
+                    title="Attendance"
+                    description="Filter sessions by course and date, then open a session to mark or review records."
+                    icon={<UserCheck className="h-5 w-5" />}
+                    actions={
+                        <Button onClick={() => setShowNewForm(true)}>
+                            <Plus className="mr-2 h-4 w-4" />
+                            New session
                         </Button>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                        <div className="px-3 py-1 bg-slate-100 rounded-full text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                            {sessions.length} sessions found
-                        </div>
-                    </div>
-
-                    {sessions.length === 0 ? (
-                        <div className="bg-white border border-slate-200 rounded-[40px] p-24 text-center shadow-sm">
-                            <div className="w-24 h-24 bg-slate-50 rounded-[32px] flex items-center justify-center mx-auto mb-8 animate-pulse">
-                                <History className="text-slate-300" size={48} />
-                            </div>
-                            <h3 className="text-2xl font-bold text-slate-900 mb-3">No sessions yet</h3>
-                            <p className="text-slate-500 max-w-sm mx-auto leading-relaxed">Start your first attendance session to begin tracking student presence in real-time.</p>
-                        </div>
-                    ) : (
-                        <div className="bg-white rounded-[2.5rem] border border-slate-100 overflow-hidden shadow-sm">
-                            <Table>
-                                <TableHeader className="bg-slate-50/50">
-                                    <TableRow className="hover:bg-transparent">
-                                        <TableHead className="font-bold text-slate-500 pl-8 h-16">Session Identifier</TableHead>
-                                        <TableHead className="font-bold text-slate-500">Course & Subject</TableHead>
-                                        <TableHead className="font-bold text-slate-500">Class Section</TableHead>
-                                        <TableHead className="font-bold text-slate-500 text-center">Status</TableHead>
-                                        <TableHead className="font-bold text-slate-500 text-right pr-8">Date</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {sessions.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map((session) => {
-                                        const course = courses.find(c => c.id === session.course_id);
-                                        const classDetail = classes.find(c => c.id === session.class_id);
-
-                                        return (
-                                            <TableRow 
-                                                key={session.id} 
-                                                onClick={() => handleSelectSession(session)}
-                                                className="hover:bg-slate-50/50 transition-colors cursor-pointer h-20 group"
-                                            >
-                                                <TableCell className="pl-8">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
-                                                            <History size={18} />
-                                                        </div>
-                                                        <span className="font-mono text-[10px] font-black uppercase tracking-tighter text-slate-400">
-                                                            {session.id.substring(0, 8)}
-                                                        </span>
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div className="flex flex-col">
-                                                        <span className="font-bold text-slate-900 group-hover:text-primary transition-colors">{course?.name || 'Loading Course...'}</span>
-                                                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Academic Curriculum</span>
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div className="flex items-center gap-2">
-                                                        <Users size={14} className="text-slate-300" />
-                                                        <span className="text-sm font-medium text-slate-600">
-                                                            {classDetail ? `Year ${classDetail.year} · Sec ${classDetail.section}` : 'N/A'}
-                                                        </span>
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell className="text-center">
-                                                    <Badge variant="secondary" className={`text-[10px] uppercase tracking-widest rounded-lg px-3 ${session.status === 'ongoing' ? 'bg-emerald-100/50 text-emerald-700' :
-                                                        session.status === 'completed' ? 'bg-slate-100/50 text-slate-600' : 'bg-primary/10 text-primary'
-                                                        }`}>
-                                                        {session.status}
-                                                    </Badge>
-                                                </TableCell>
-                                                <TableCell className="text-right pr-8">
-                                                    <div className="flex flex-col items-end">
-                                                        <span className="font-bold text-slate-900 text-sm">
-                                                            {new Date(session.created_at || Date.now()).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                                        </span>
-                                                        <span className="text-[10px] font-medium text-slate-400">
-                                                            {new Date(session.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                        </span>
-                                                    </div>
-                                                </TableCell>
-                                            </TableRow>
-                                        );
-                                    })}
-                                </TableBody>
-                            </Table>
-                            {sessions.length > itemsPerPage && (
-                                <div className="p-4 border-t border-slate-100 flex justify-end">
-                                    <Pagination className="w-auto mx-0">
-                                        <PaginationContent>
-                                            <PaginationItem>
-                                                <PaginationPrevious 
-                                                    href="#" 
-                                                    onClick={(e) => { e.preventDefault(); setCurrentPage(p => Math.max(1, p - 1)); }}
-                                                    className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
-                                                />
-                                            </PaginationItem>
-                                            
-                                            {Array.from({ length: Math.ceil(sessions.length / itemsPerPage) }).map((_, i) => (
-                                                <PaginationItem key={i}>
-                                                    <PaginationLink 
-                                                        href="#" 
-                                                        onClick={(e) => { e.preventDefault(); setCurrentPage(i + 1); }}
-                                                        isActive={currentPage === i + 1}
-                                                    >
-                                                        {i + 1}
-                                                    </PaginationLink>
-                                                </PaginationItem>
-                                            ))}
-
-                                            <PaginationItem>
-                                                <PaginationNext 
-                                                    href="#" 
-                                                    onClick={(e) => { e.preventDefault(); setCurrentPage(p => Math.min(Math.ceil(sessions.length / itemsPerPage), p + 1)); }}
-                                                    className={currentPage >= Math.ceil(sessions.length / itemsPerPage) ? "pointer-events-none opacity-50" : ""}
-                                                />
-                                            </PaginationItem>
-                                        </PaginationContent>
-                                    </Pagination>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            ) : (
-                <div className="space-y-6 animate-in slide-in-from-right-4 duration-500">
-                    <div className="flex items-center justify-between">
-                        <button
-                            onClick={() => setSelectedSession(null)}
-                            className="flex items-center gap-2.5 text-slate-400 hover:text-primary font-bold transition-all hover:-translate-x-1"
-                        >
-                            <ChevronRight size={22} className="rotate-180" />
-                            Back to Sessions
-                        </button>
-                        <div className="flex items-center gap-3">
-                            <span className={`px-5 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest ${selectedSession.status === 'ongoing' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
-                                }`}>
-                                {selectedSession.status}
-                            </span>
-                        </div>
-                    </div>
-
-                    <div className="bg-white border border-slate-200 rounded-[40px] overflow-hidden shadow-sm">
-                        <div className="p-8 md:p-10 bg-slate-50 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-6">
-                            <div>
-                                <h2 className="text-3xl font-bold text-slate-900 tracking-tight">
-                                    {courses.find(c => c.id === selectedSession.course_id)?.name}
-                                </h2>
-                                <p className="text-slate-500 font-bold mt-1">Class: {classes.find(c => c.id === selectedSession.class_id) ? `Year ${classes.find(c => c.id === selectedSession.class_id)?.year} - Section ${classes.find(c => c.id === selectedSession.class_id)?.section}` : '...'}</p>
-                            </div>
-                            <div className="flex items-center gap-4">
-                                <div className="text-right mr-6 hidden md:block">
-                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Attendance Rate</p>
-                                    <p className="text-3xl font-bold text-emerald-600 tracking-tighter">
-                                        {Math.round((records.filter(r => r.status === 'present').length / (records.length || 1)) * 100)}%
-                                    </p>
-                                </div>
-                                <div className="w-14 h-14 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-primary shadow-sm hover:scale-105 transition-transform">
-                                    <Users size={28} />
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="p-6 md:p-10">
-                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-                                <div className="relative flex-1 max-w-md group">
-                                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors" size={20} />
-                                    <Input
-                                        placeholder="Search student by name..."
-                                        className="pl-12 h-12 bg-slate-100 border-none rounded-2xl text-sm font-bold focus-visible:ring-primary/10"
-                                    />
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <div className="px-5 py-3.5 bg-slate-50 rounded-2xl border border-slate-100 flex items-center gap-2">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                                        <span className="text-[11px] font-bold text-slate-600">{records.filter(r => r.status === 'present').length} Present</span>
-                                    </div>
-                                    <button className="p-3.5 rounded-2xl border border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-colors"><Filter size={20} /></button>
-                                </div>
-                            </div>
-
-                            <div className="overflow-x-auto rounded-3xl border border-slate-100">
-                                <table className="w-full border-collapse">
-                                    <thead>
-                                        <tr className="text-left text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/50">
-                                            <th className="px-6 py-5 border-b border-slate-100">Student Name</th>
-                                            <th className="px-6 py-5 border-b border-slate-100">Active Status</th>
-                                            <th className="px-6 py-5 border-b border-slate-100 text-right">Quick Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-50">
-                                        {records.map((record) => (
-                                            <tr key={record.id} className="group hover:bg-slate-50/30 transition-all">
-                                                <td className="px-6 py-6">
-                                                    <div className="flex items-center gap-4">
-                                                        <div className="w-10 h-10 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 font-black shrink-0 transition-colors group-hover:bg-primary/5 group-hover:text-primary">
-                                                            {record.student_name?.charAt(0) || '?'}
-                                                        </div>
-                                                        <span className="font-bold text-slate-900 group-hover:text-primary transition-colors">{record.student_name || 'Unknown Student'}</span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-6">
-                                                    <span className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-tight ${record.status === 'present' ? 'bg-emerald-100 text-emerald-700' :
-                                                        record.status === 'absent' ? 'bg-rose-100 text-rose-700' :
-                                                            record.status === 'excused' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
-                                                        }`}>
-                                                        <span className={`w-1.5 h-1.5 rounded-full shadow-sm ${record.status === 'present' ? 'bg-emerald-500' :
-                                                            record.status === 'absent' ? 'bg-rose-500' :
-                                                                record.status === 'excused' ? 'bg-blue-500' : 'bg-amber-500'
-                                                            }`}></span>
-                                                        {record.status}
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-6 text-right">
-                                                    <div className="flex items-center justify-end gap-2.5">
-                                                        <button
-                                                            onClick={() => handleUpdateStatus(record.id, 'present')}
-                                                            disabled={record.status === 'present'}
-                                                            className={`p-3 rounded-xl transition-all ${record.status === 'present' ? 'bg-emerald-100 text-emerald-600 ring-2 ring-emerald-500/10' : 'bg-white border border-slate-200 text-slate-300 hover:border-emerald-500 hover:text-emerald-500 hover:bg-emerald-50 hover:scale-110'}`}
-                                                            title="Mark Present"
-                                                        >
-                                                            <CheckCircle2 size={20} />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleUpdateStatus(record.id, 'excused')}
-                                                            disabled={record.status === 'excused'}
-                                                            className={`p-3 rounded-xl transition-all ${record.status === 'excused' ? 'bg-blue-100 text-blue-600 ring-2 ring-blue-500/10' : 'bg-white border border-slate-200 text-slate-300 hover:border-blue-500 hover:text-blue-500 hover:bg-blue-100/30 hover:scale-110'}`}
-                                                            title="Mark Excused"
-                                                        >
-                                                            <Clock size={20} />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleUpdateStatus(record.id, 'absent')}
-                                                            disabled={record.status === 'absent'}
-                                                            className={`p-3 rounded-xl transition-all ${record.status === 'absent' ? 'bg-rose-100 text-rose-600 ring-2 ring-rose-500/10' : 'bg-white border border-slate-200 text-slate-300 hover:border-rose-500 hover:text-rose-500 hover:bg-rose-50 hover:scale-110'}`}
-                                                            title="Mark Absent"
-                                                        >
-                                                            <XCircle size={20} />
-                                                        </button>
-
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                    }
+                />
             )}
 
-            {/* New Session Dialog */}
-            <Dialog open={showNewForm} onOpenChange={setShowNewForm}>
-                <DialogContent className="sm:max-w-xl p-0 border-none rounded-[40px] overflow-hidden bg-white shadow-2xl">
-                    <div className="relative">
-                        <div className="bg-slate-900 px-10 py-12 text-white relative overflow-hidden">
-                            <div className="relative z-10">
-                                <DialogHeader>
-                                    <div className="flex items-center gap-4 mb-4">
-                                        <div className="w-12 h-12 bg-white/10 backdrop-blur-xl rounded-2xl flex items-center justify-center border border-white/10">
-                                            <Plus size={24} className="text-white" />
-                                        </div>
-                                        <div>
-                                            <DialogTitle className="text-3xl font-black tracking-tight text-white">New Session</DialogTitle>
-                                            <DialogDescription className="text-slate-400 text-base font-medium">
-                                                Initialize a new attendance tracking session.
-                                            </DialogDescription>
-                                        </div>
-                                    </div>
-                                </DialogHeader>
-                            </div>
-                            {/* Decorative background element */}
-                            <div className="absolute top-0 right-0 w-64 h-64 bg-primary/20 rounded-full translate-x-20 -translate-y-20 blur-3xl"></div>
-                        </div>
+            {!selectedSession ? (
+                <div className="space-y-6">
+                    <Card>
+                        <CardHeader className="pb-4">
+                            <CardTitle className="text-base">Filters</CardTitle>
+                            <CardDescription>
+                                Narrow the session list by course, section, or date.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="flex flex-wrap items-end gap-4">
+                            <FilterField label="Course" className="min-w-[200px]">
+                                <Select
+                                    value={filters.course_id || 'all'}
+                                    onValueChange={(v) =>
+                                        setFilters((prev) => ({
+                                            ...prev,
+                                            course_id: v === 'all' ? undefined : v,
+                                            class_id: undefined,
+                                        }))
+                                    }
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="All courses" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All courses</SelectItem>
+                                        {courses.map((course) => (
+                                            <SelectItem key={course.id} value={course.id}>
+                                                {course.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </FilterField>
 
-                        <div className="p-10 space-y-8">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                {/* Course Selection */}
-                                <div className="space-y-3">
-                                    <Label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
-                                        <BookOpen size={14} className="text-primary" />
-                                        Course
-                                    </Label>
-                                    <Select
-                                        value={newSession.course_id}
-                                        onValueChange={(v) => {
-                                            setNewSession({ ...newSession, course_id: v, class_id: '' });
-                                        }}
-                                    >
-                                        <SelectTrigger className="h-14 rounded-2xl border-slate-100 bg-slate-50 focus:ring-primary/10 hover:bg-slate-100 transition-all font-bold px-5">
-                                            <SelectValue placeholder="Select course..." />
-                                        </SelectTrigger>
-                                        <SelectContent className="rounded-2xl border-slate-100 shadow-2xl p-2">
-                                            {courses.length === 0 ? (
-                                                <div className="py-6 px-4 text-center">
-                                                    <p className="text-xs font-bold text-slate-400">No courses assigned.</p>
-                                                </div>
-                                            ) : (
-                                                courses.map(course => (
-                                                    <SelectItem key={course.id} value={course.id} className="py-3 px-4 rounded-xl focus:bg-primary/5 transition-colors cursor-pointer font-medium">
-                                                        {course.name}
-                                                    </SelectItem>
-                                                ))
-                                            )}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-
-                                {/* Class Selection */}
-                                <div className="space-y-3">
-                                    <Label className={`text-[11px] font-black uppercase tracking-widest ml-1 flex items-center gap-2 transition-colors ${!newSession.course_id ? 'text-slate-300' : 'text-slate-400'}`}>
-                                        <Users size={14} className={newSession.course_id ? "text-primary" : "text-slate-300"} />
-                                        Class
-                                    </Label>
-                                    <Select
-                                        value={newSession.class_id}
-                                        disabled={!newSession.course_id}
-                                        onValueChange={(v) => setNewSession({ ...newSession, class_id: v })}
-                                    >
-                                        <SelectTrigger className={`h-14 rounded-2xl border-slate-100 focus:ring-primary/10 transition-all font-bold px-5 ${!newSession.course_id ? 'bg-slate-50/50 opacity-50' : 'bg-slate-50 hover:bg-slate-100'}`}>
-                                            <SelectValue placeholder={!newSession.course_id ? "Pick course first" : "Select class..."} />
-                                        </SelectTrigger>
-                                        <SelectContent className="rounded-2xl border-slate-100 shadow-2xl p-2">
-                                            {availableClasses.map(cls => (
-                                                <SelectItem key={cls.id} value={cls.id} className="py-3 px-4 rounded-xl focus:bg-primary/5 transition-colors cursor-pointer font-medium">
-                                                    Year {cls.year} - Section {cls.section}
+                            <FilterField label="Class section" className="min-w-[200px]">
+                                <Select
+                                    value={filters.class_id || 'all'}
+                                    disabled={!filters.course_id}
+                                    onValueChange={(v) =>
+                                        setFilters((prev) => ({
+                                            ...prev,
+                                            class_id: v === 'all' ? undefined : v,
+                                        }))
+                                    }
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue
+                                            placeholder={
+                                                !filters.course_id
+                                                    ? 'Select course first'
+                                                    : 'All sections'
+                                            }
+                                        />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All sections</SelectItem>
+                                        {classes
+                                            .filter((cls) =>
+                                                assignments.some(
+                                                    (a) =>
+                                                        a.course_id === filters.course_id &&
+                                                        a.class_id === cls.id
+                                                )
+                                            )
+                                            .map((cls) => (
+                                                <SelectItem key={cls.id} value={cls.id}>
+                                                    Year {cls.year} · Section {cls.section}
                                                 </SelectItem>
                                             ))}
-                                            {newSession.course_id && availableClasses.length === 0 && (
-                                                <div className="py-6 px-4 text-center">
-                                                    <p className="text-xs font-bold text-slate-400">No classes for this course.</p>
-                                                </div>
-                                            )}
-                                        </SelectContent>
-                                    </Select>
+                                    </SelectContent>
+                                </Select>
+                            </FilterField>
+
+                            <FilterField label="Date" className="min-w-[160px]">
+                                <Input
+                                    type="date"
+                                    value={filters.date || ''}
+                                    onChange={(e) =>
+                                        setFilters((prev) => ({
+                                            ...prev,
+                                            date: e.target.value || undefined,
+                                        }))
+                                    }
+                                />
+                            </FilterField>
+
+                            <Button variant="outline" onClick={() => setFilters({})}>
+                                Clear filters
+                            </Button>
+                        </CardContent>
+                    </Card>
+
+                    <p className="text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">{sessions.length}</span>{' '}
+                        sessions
+                    </p>
+
+                    {sessions.length === 0 ? (
+                        <Card>
+                            <CardContent className="flex flex-col items-center justify-center py-20 text-center">
+                                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                                    <History className="h-7 w-7 text-muted-foreground" />
                                 </div>
-                            </div>
-
-                            <div className="space-y-3">
-                                <Label className="text-[11px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-2">
-                                    <CalendarDays size={14} className="text-primary" />
-                                    Starting Time
-                                </Label>
-                                <DateTimePicker date={sessionDate} setDate={setSessionDate} />
-                            </div>
-
-                            <Separator className="bg-slate-100" />
-
-                            <div className="flex items-center justify-between gap-6">
-                                <div className="flex items-center gap-3">
-                                    <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center text-amber-600 shrink-0">
-                                        <AlertCircle size={20} />
-                                    </div>
-                                    <p className="text-[11px] text-slate-500 font-bold leading-tight">
-                                        All students will be initialized as <span className="text-rose-500">Absent</span> until they scan.
-                                    </p>
-                                </div>
-                                <Button
-                                    onClick={handleCreateSession}
-                                    disabled={!newSession.course_id || !newSession.class_id || actionLoading}
-                                    className="h-14 bg-primary text-white font-bold px-8 rounded-2xl shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-30 shrink-0"
-                                >
-                                    {actionLoading ? (
-                                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                    ) : "Start Session"}
+                                <h3 className="text-lg font-semibold">No sessions yet</h3>
+                                <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                                    Start a new session to track attendance for your class.
+                                </p>
+                                <Button className="mt-6" onClick={() => setShowNewForm(true)}>
+                                    <Plus className="mr-2 h-4 w-4" />
+                                    New session
                                 </Button>
-                            </div>
-                        </div>
-                    </div>
-                </DialogContent>
-            </Dialog>
+                            </CardContent>
+                        </Card>
+                    ) : (
+                        <Card>
+                            <CardHeader className="border-b border-border pb-4">
+                                <CardTitle className="text-base">Sessions</CardTitle>
+                                <CardDescription>
+                                    Click a row to open attendance records for that session.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="p-0">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Course</TableHead>
+                                            <TableHead>Section</TableHead>
+                                            <TableHead>Date & time</TableHead>
+                                            <TableHead className="text-center">Status</TableHead>
+                                            <TableHead className="w-12" />
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {sessions
+                                            .slice(
+                                                (currentPage - 1) * itemsPerPage,
+                                                currentPage * itemsPerPage
+                                            )
+                                            .map((session) => {
+                                                const course = courses.find(
+                                                    (c) => c.id === session.course_id
+                                                );
+                                                const classDetail = classes.find(
+                                                    (c) => c.id === session.class_id
+                                                );
+                                                const isActive =
+                                                    session.status === 'ongoing' ||
+                                                    session.status === 'active';
+                                                const isDone =
+                                                    session.status === 'finished' ||
+                                                    session.status === 'completed';
 
-            {/* Permission Details Dialog */}
-            <Dialog open={!!viewingPermission} onOpenChange={(open) => !open && setViewingPermission(null)}>
-                <DialogContent className="sm:max-w-md p-0 border-none rounded-[32px] overflow-hidden bg-white shadow-2xl">
+                                                return (
+                                                    <TableRow
+                                                        key={session.id}
+                                                        onClick={() => handleSelectSession(session)}
+                                                        className="cursor-pointer"
+                                                    >
+                                                        <TableCell>
+                                                            <p className="font-medium">
+                                                                {course?.name ?? 'Unknown course'}
+                                                            </p>
+                                                            <p className="font-mono text-xs text-muted-foreground">
+                                                                {session.id.substring(0, 8)}
+                                                            </p>
+                                                        </TableCell>
+                                                        <TableCell className="text-muted-foreground">
+                                                            {classDetail
+                                                                ? `Year ${classDetail.year} · Sec ${classDetail.section}`
+                                                                : '—'}
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <p className="text-sm font-medium">
+                                                                {new Date(
+                                                                    session.created_at
+                                                                ).toLocaleDateString(undefined, {
+                                                                    weekday: 'short',
+                                                                    month: 'short',
+                                                                    day: 'numeric',
+                                                                })}
+                                                            </p>
+                                                            <p className="text-xs text-muted-foreground">
+                                                                {new Date(
+                                                                    session.created_at
+                                                                ).toLocaleTimeString([], {
+                                                                    hour: '2-digit',
+                                                                    minute: '2-digit',
+                                                                })}
+                                                            </p>
+                                                        </TableCell>
+                                                        <TableCell className="text-center">
+                                                            <Badge
+                                                                variant={
+                                                                    isActive
+                                                                        ? 'default'
+                                                                        : isDone
+                                                                          ? 'secondary'
+                                                                          : 'outline'
+                                                                }
+                                                            >
+                                                                {session.status}
+                                                            </Badge>
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })}
+                                    </TableBody>
+                                </Table>
+                                {sessions.length > itemsPerPage && (
+                                    <div className="flex justify-end border-t border-border p-4">
+                                        <Pagination>
+                                            <PaginationContent>
+                                                <PaginationItem>
+                                                    <PaginationPrevious
+                                                        href="#"
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            setCurrentPage((p) => Math.max(1, p - 1));
+                                                        }}
+                                                        className={
+                                                            currentPage === 1
+                                                                ? 'pointer-events-none opacity-50'
+                                                                : ''
+                                                        }
+                                                    />
+                                                </PaginationItem>
+                                                {Array.from({
+                                                    length: Math.ceil(sessions.length / itemsPerPage),
+                                                }).map((_, i) => (
+                                                    <PaginationItem key={i}>
+                                                        <PaginationLink
+                                                            href="#"
+                                                            isActive={currentPage === i + 1}
+                                                            onClick={(e) => {
+                                                                e.preventDefault();
+                                                                setCurrentPage(i + 1);
+                                                            }}
+                                                        >
+                                                            {i + 1}
+                                                        </PaginationLink>
+                                                    </PaginationItem>
+                                                ))}
+                                                <PaginationItem>
+                                                    <PaginationNext
+                                                        href="#"
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            setCurrentPage((p) =>
+                                                                Math.min(
+                                                                    Math.ceil(
+                                                                        sessions.length / itemsPerPage
+                                                                    ),
+                                                                    p + 1
+                                                                )
+                                                            );
+                                                        }}
+                                                        className={
+                                                            currentPage >=
+                                                            Math.ceil(sessions.length / itemsPerPage)
+                                                                ? 'pointer-events-none opacity-50'
+                                                                : ''
+                                                        }
+                                                    />
+                                                </PaginationItem>
+                                            </PaginationContent>
+                                        </Pagination>
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    )}
+                </div>
+            ) : rosterLoading ? (
+                <div className="flex min-h-[400px] items-center justify-center">
+                    <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-primary" />
+                </div>
+            ) : (
+                <AttendanceRoster
+                    session={selectedSession}
+                    records={records}
+                    course={selectedCourse}
+                    classDetail={selectedClass}
+                    onBack={() => setSelectedSession(null)}
+                    onRecordsChange={setRecords}
+                />
+            )}
+
+            <NewSessionDialog
+                open={showNewForm}
+                onOpenChange={setShowNewForm}
+                courses={courses}
+                classes={classes}
+                assignments={assignments}
+                courseId={newSession.course_id}
+                classId={newSession.class_id}
+                sessionDate={sessionDate}
+                loading={actionLoading}
+                onCourseChange={(courseId) =>
+                    setNewSession({ course_id: courseId, class_id: '' })
+                }
+                onClassChange={(classId) =>
+                    setNewSession((prev) => ({ ...prev, class_id: classId }))
+                }
+                onDateChange={setSessionDate}
+                onSubmit={handleCreateSession}
+            />
+
+            <Dialog
+                open={!!viewingPermission}
+                onOpenChange={(open) => !open && setViewingPermission(null)}
+            >
+                <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md">
                     {viewingPermission && (
-                        <div>
-                            <div className="bg-slate-900 px-8 py-10 text-white relative overflow-hidden">
-                                <div className="relative z-10 flex items-center gap-4">
-                                    <div className="w-10 h-10 bg-white/10 backdrop-blur-xl rounded-xl flex items-center justify-center border border-white/10">
-                                        <AlertCircle size={20} className="text-white" />
-                                    </div>
-                                    <div>
-                                        <DialogTitle className="text-xl font-bold tracking-tight text-white">Permission Request</DialogTitle>
-                                        <p className="text-slate-400 text-xs font-medium">From {viewingPermission.student_name}</p>
-                                    </div>
-                                </div>
-                                <div className="absolute top-0 right-0 w-32 h-32 bg-primary/20 rounded-full translate-x-10 -translate-y-10 blur-2xl"></div>
-                            </div>
-
-                            <div className="p-8 space-y-6">
-                                <div className="space-y-2">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Reason for Absence</p>
-                                    <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 text-sm text-slate-800 leading-relaxed min-h-[100px]">
+                        <>
+                            <DialogHeader className="border-b border-border bg-muted/30 px-6 py-5">
+                                <DialogTitle>Permission request</DialogTitle>
+                                <DialogDescription>
+                                    From {viewingPermission.student_name}
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="space-y-4 px-6 py-5">
+                                <div>
+                                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                        Reason
+                                    </p>
+                                    <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm leading-relaxed">
                                         {viewingPermission.description}
                                     </div>
                                 </div>
-
                                 {viewingPermission.img_url && (
-                                    <div className="space-y-2">
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Attachment</p>
-                                        <div className="rounded-2xl border border-slate-100 overflow-hidden group">
-                                            <img
-                                                src={`${(import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''}/${viewingPermission.img_url}`}
-                                                alt="Permission evidence"
-                                                className="w-full object-cover max-h-64 hover:scale-105 transition-transform duration-500 cursor-zoom-in"
-                                                onClick={() => window.open(`${(import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''}/${viewingPermission.img_url}`, '_blank')}
-                                            />
-                                        </div>
+                                    <div>
+                                        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                            Attachment
+                                        </p>
+                                        <img
+                                            src={`${(import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''}/${viewingPermission.img_url}`}
+                                            alt="Permission evidence"
+                                            className="max-h-64 w-full rounded-lg border border-border object-cover"
+                                        />
                                     </div>
                                 )}
-
-                                <Separator className="bg-slate-100" />
-
+                                <Separator />
                                 <div className="flex items-center justify-between gap-4">
-                                    <Badge className={`px-4 py-1.5 rounded-xl uppercase tracking-widest text-[10px] ${viewingPermission.status === 'accepted' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
-                                        viewingPermission.status === 'rejected' ? 'bg-rose-50 text-rose-600 border border-rose-100' :
-                                            'bg-amber-50 text-amber-600 border border-amber-100'
-                                        }`}>
+                                    <Badge variant="outline" className="capitalize">
                                         {viewingPermission.status}
                                     </Badge>
-
                                     {viewingPermission.status === 'pending' ? (
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex gap-2">
                                             <Button
                                                 variant="outline"
-                                                className="rounded-xl border-rose-100 text-rose-600 hover:bg-rose-50 hover:border-rose-200 font-bold"
-                                                onClick={() => handleUpdatePermission(viewingPermission.id, 'rejected')}
+                                                onClick={() =>
+                                                    handleUpdatePermission(
+                                                        viewingPermission.id,
+                                                        'rejected'
+                                                    )
+                                                }
                                             >
                                                 Reject
                                             </Button>
                                             <Button
-                                                className="rounded-xl bg-slate-900 text-white hover:bg-slate-800 font-bold px-6"
-                                                onClick={() => handleUpdatePermission(viewingPermission.id, 'accepted')}
+                                                onClick={() =>
+                                                    handleUpdatePermission(
+                                                        viewingPermission.id,
+                                                        'accepted'
+                                                    )
+                                                }
                                             >
                                                 Approve
                                             </Button>
@@ -727,7 +581,6 @@ export default function AttendancePage() {
                                     ) : (
                                         <Button
                                             variant="ghost"
-                                            className="text-slate-400 font-bold"
                                             onClick={() => setViewingPermission(null)}
                                         >
                                             Close
@@ -735,17 +588,10 @@ export default function AttendancePage() {
                                     )}
                                 </div>
                             </div>
-                        </div>
+                        </>
                     )}
                 </DialogContent>
             </Dialog>
         </div>
     );
-}
-
-// Minimal Filter icon
-function Filter({ size }: { size: number }) {
-    return (
-        <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
-    )
 }

@@ -405,7 +405,7 @@ pub async fn get_attendance_stats_handler(
 #[derive(Serialize)] pub struct InstructorDashboardMetrics { pub stats: InstructorStats, pub trends: Vec<TrendPoint>, pub course_performance: Vec<CoursePoint> }
 #[derive(Serialize)] pub struct InstructorStats { pub active_courses: usize, pub total_sessions: usize, pub avg_attendance: f64, pub total_students: usize }
 #[derive(Serialize)] pub struct TrendPoint { pub date: String, pub rate: f64 }
-#[derive(Serialize)] pub struct CoursePoint { pub course_id: String, pub attendance_rate: f64 }
+#[derive(Serialize)] pub struct CoursePoint { pub course_id: String, pub course_name: Option<String>, pub attendance_rate: f64 }
 
 pub async fn get_instructor_dashboard_metrics_handler(
     State(state): State<AppState>,
@@ -434,7 +434,19 @@ pub async fn get_instructor_dashboard_metrics_handler(
         }
     }
     let avg = if total_records > 0 { (total_present as f64/total_records as f64)*100.0 } else { 0.0 };
-    let course_performance = course_map.into_iter().map(|(id,(p,t))| CoursePoint { course_id: id.to_string()[..8].to_string(), attendance_rate: if t>0{(p as f64/t as f64)*100.0}else{0.0} }).collect();
+    let mut course_performance = Vec::new();
+    for (id, (p, t)) in course_map {
+        let course_name = match state.client.request(Method::GET, format!("{}/course/{}", state.data_source_url, id)).send().await {
+            Ok(r) if r.status() == StatusCode::OK => r.json::<Course>().await.ok().map(|c| c.name),
+            _ => None,
+        };
+        course_performance.push(CoursePoint {
+            course_id: id.to_string(),
+            course_name,
+            attendance_rate: if t > 0 { (p as f64 / t as f64) * 100.0 } else { 0.0 },
+        });
+    }
+    course_performance.sort_by(|a, b| b.attendance_rate.partial_cmp(&a.attendance_rate).unwrap_or(std::cmp::Ordering::Equal));
     let total_students = if !session_ids.is_empty() {
         let recs = attendance_record::table.filter(attendance_record::session_id.eq_any(&session_ids)).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
         recs.into_iter().map(|r| r.student_id).collect::<std::collections::HashSet<_>>().len()
