@@ -2,7 +2,7 @@ use axum::{Router, routing::{get, post, patch}};
 use tower_http::trace::{TraceLayer, DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse};
 use tracing::Level;
 use crate::handlers::{
-    static_handler, login_handler, verify_handler, refresh_handler, logout_handler, nfc_login_handler, health_check_handler,
+    login_handler, verify_handler, refresh_handler, logout_handler, nfc_login_handler, health_check_handler,
     students::*,
     instructors::*,
     analytics::{
@@ -89,9 +89,9 @@ pub fn new(app_state: AppState) -> Router {
         .route("/admin/reports/build", axum::routing::post(report_build_handler))
         .fallback(|| async { (axum::http::StatusCode::NOT_FOUND, axum::Json(crate::types::ErrorResponse { message: "API endpoint not found".to_string() })) });
 
-    Router::new()
-        .nest("/api", api_routes)
-        .fallback(static_handler)
+    let router = Router::new().nest("/api", api_routes);
+
+    crate::spa::with_frontend_fallback(router)
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))

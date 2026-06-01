@@ -5,6 +5,7 @@ mod helpers;
 mod models;
 mod router;
 mod schema;
+mod spa;
 mod types;
 use reqwest::ClientBuilder;
 use tracing::info;

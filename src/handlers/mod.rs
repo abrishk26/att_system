@@ -265,25 +265,6 @@ fn issue_tokens(
     Ok((access_token, refresh_token))
 }
 
-/// True for Vite-built files (`assets/*.js`, `vite.svg`, etc.), not React Router paths.
-fn is_embedded_static_asset(path: &str) -> bool {
-    if path.is_empty() {
-        return false;
-    }
-    if path.starts_with("assets/") || path == "vite.svg" || path == "index.html" {
-        return true;
-    }
-    path.rsplit('/')
-        .next()
-        .map(|name| name.contains('.'))
-        .unwrap_or(false)
-}
-
-/// Client-side routes like `/instructor/courses` have no file on disk — serve the SPA shell.
-fn is_spa_client_route(path: &str) -> bool {
-    !path.is_empty() && !is_embedded_static_asset(path)
-}
-
 fn serve_embedded(path: &str, content: rust_embed::EmbeddedFile) -> axum::response::Response {
     use axum::response::IntoResponse;
     let mime = mime_guess::from_path(path).first_or_octet_stream();
@@ -306,6 +287,11 @@ fn serve_index_html() -> axum::response::Response {
     }
 }
 
+/// Serves the Vite `ui/dist` build. SPA fallback (same idea as nginx `try_files $uri /index.html`):
+/// 1. If the path matches a real embedded file (JS, CSS, images) → serve that file.
+/// 2. Otherwise → serve `index.html` with 200 so React Router can handle the URL.
+///
+/// API routes live under `/api` and are registered before this handler in `router.rs`.
 pub async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
     let path = uri.path().trim_start_matches('/');
 
@@ -321,8 +307,7 @@ pub async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoRe
         }
     }
 
-    // React Router paths (e.g. /instructor/courses) — browser refresh must get index.html.
-    if is_spa_client_route(path) {
+    if path.is_empty() {
         return serve_index_html();
     }
 

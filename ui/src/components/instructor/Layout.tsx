@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../AuthContext';
+import type { UserProfile } from '../../api';
 import { PortalGuard } from '../auth/PortalGuard';
 import {
     BarChart3,
@@ -29,16 +30,22 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 export default function InstructorLayout() {
+    return (
+        <PortalGuard portal="instructor">
+            {(user) => <InstructorLayoutShell user={user} />}
+        </PortalGuard>
+    );
+}
+
+function InstructorLayoutShell({ user }: { user: UserProfile }) {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [isDark, setIsDark] = useDarkMode();
-    const { user, logout } = useAuth();
+    const { logout } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
 
-    const instructorName = user
-        ? `${user.first_name}${user.last_name ? ` ${user.last_name}` : ''}`
-        : '';
+    const instructorName = `${user.first_name}${user.last_name ? ` ${user.last_name}` : ''}`;
 
     const menuItems = [
         { title: 'Dashboard', icon: BarChart3, path: '/instructor/dashboard' },
@@ -54,7 +61,6 @@ export default function InstructorLayout() {
     };
 
     return (
-        <PortalGuard portal="instructor">
         <div className="flex min-h-screen overflow-hidden bg-background font-sans text-foreground">
             <aside
                 className={`fixed inset-y-0 left-0 z-50 transform border-r border-border bg-card transition-all duration-300 ease-in-out lg:relative lg:translate-x-0 ${
@@ -177,12 +183,12 @@ export default function InstructorLayout() {
                                     <div className="hidden text-right sm:block">
                                         <p className="text-xs text-muted-foreground">Instructor</p>
                                         <p className="text-sm font-medium text-foreground">
-                                            {user!.first_name}
+                                            {user.first_name}
                                         </p>
                                     </div>
                                     <Avatar className="h-9 w-9">
                                         <AvatarFallback className="bg-primary text-sm font-medium text-primary-foreground">
-                                            {user!.first_name?.charAt(0)}
+                                            {user.first_name?.charAt(0)}
                                         </AvatarFallback>
                                     </Avatar>
                                 </button>
@@ -191,7 +197,7 @@ export default function InstructorLayout() {
                                 <DropdownMenuLabel className="font-normal">
                                     <p className="font-medium">{instructorName}</p>
                                     <p className="text-xs capitalize text-muted-foreground">
-                                        @{user!.username} · {user!.role}
+                                        @{user.username} · {user.role}
                                     </p>
                                 </DropdownMenuLabel>
                                 <DropdownMenuSeparator />
@@ -205,7 +211,7 @@ export default function InstructorLayout() {
                 </header>
 
                 <main className="animate-fade-in flex-1 overflow-y-auto bg-muted/20 p-4 md:p-8">
-                    <Outlet context={{ instructorId: user!.id }} />
+                    <Outlet context={{ instructorId: user.id }} />
                 </main>
             </div>
 
@@ -216,6 +222,5 @@ export default function InstructorLayout() {
                 />
             )}
         </div>
-        </PortalGuard>
     );
 }
