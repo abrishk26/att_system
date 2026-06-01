@@ -4,6 +4,8 @@ import {
     ArrowRight,
     History,
     UserCheck,
+    CircleCheck,
+    Loader2,
 } from 'lucide-react';
 import { api, type PermissionWithStudent, type Session, type AttendanceRecordWithStudent, type Course, type Class, type Assignment, type EnrichedAssignment } from '../../api';
 import { useAuth } from '../../AuthContext';
@@ -32,6 +34,7 @@ import { Badge } from '@/components/ui/badge';
 import { NewSessionDialog } from '@/components/instructor/attendance/NewSessionDialog';
 import { AttendanceRoster } from '@/components/instructor/attendance/AttendanceRoster';
 import { Separator } from '@/components/ui/separator';
+import { isFinishedSession, sessionStatusLabel } from '@/lib/sessionStatus';
 
 interface ClassDetail extends Class {}
 
@@ -43,6 +46,7 @@ export default function AttendancePage() {
     const [loading, setLoading] = useState(true);
     const [rosterLoading, setRosterLoading] = useState(false);
     const [actionLoading, setActionLoading] = useState(false);
+    const [completingId, setCompletingId] = useState<string | null>(null);
 
     const [assignments, setAssignments] = useState<Assignment[]>([]);
     const [courses, setCourses] = useState<Course[]>([]);
@@ -157,6 +161,31 @@ export default function AttendancePage() {
             console.error('Failed to fetch records:', error);
         } finally {
             setRosterLoading(false);
+        }
+    };
+
+    const handleSessionUpdated = (updated: Session) => {
+        setSessions((prev) =>
+            prev.map((s) => (s.id === updated.id ? updated : s))
+        );
+        setSelectedSession((prev) => (prev?.id === updated.id ? updated : prev));
+    };
+
+    const handleCompleteSession = async (
+        e: React.MouseEvent,
+        session: Session
+    ) => {
+        e.stopPropagation();
+        if (isFinishedSession(session.status)) return;
+
+        setCompletingId(session.id);
+        try {
+            const updated = await api.updateSession(session.id, 'finished');
+            handleSessionUpdated(updated);
+        } catch (error) {
+            console.error('Failed to complete session:', error);
+        } finally {
+            setCompletingId(null);
         }
     };
 
@@ -334,7 +363,8 @@ export default function AttendancePage() {
                                             <TableHead>Section</TableHead>
                                             <TableHead>Date & time</TableHead>
                                             <TableHead className="text-center">Status</TableHead>
-                                            <TableHead className="w-12" />
+                                            <TableHead className="text-right">Actions</TableHead>
+                                            <TableHead className="w-10" />
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -350,12 +380,7 @@ export default function AttendancePage() {
                                                 const classDetail = classes.find(
                                                     (c) => c.id === session.class_id
                                                 );
-                                                const isActive =
-                                                    session.status === 'ongoing' ||
-                                                    session.status === 'active';
-                                                const isDone =
-                                                    session.status === 'finished' ||
-                                                    session.status === 'completed';
+                                                const isDone = isFinishedSession(session.status);
 
                                                 return (
                                                     <TableRow
@@ -396,17 +421,33 @@ export default function AttendancePage() {
                                                             </p>
                                                         </TableCell>
                                                         <TableCell className="text-center">
-                                                            <Badge
-                                                                variant={
-                                                                    isActive
-                                                                        ? 'default'
-                                                                        : isDone
-                                                                          ? 'secondary'
-                                                                          : 'outline'
-                                                                }
-                                                            >
-                                                                {session.status}
+                                                            <Badge variant={isDone ? 'secondary' : 'default'}>
+                                                                {sessionStatusLabel(session.status)}
                                                             </Badge>
+                                                        </TableCell>
+                                                        <TableCell className="text-right">
+                                                            {!isDone ? (
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    disabled={completingId === session.id}
+                                                                    onClick={(e) =>
+                                                                        handleCompleteSession(e, session)
+                                                                    }
+                                                                >
+                                                                    {completingId === session.id ? (
+                                                                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                                                    ) : (
+                                                                        <CircleCheck className="mr-1.5 h-3.5 w-3.5" />
+                                                                    )}
+                                                                    Complete
+                                                                </Button>
+                                                            ) : (
+                                                                <span className="text-xs text-muted-foreground">
+                                                                    Closed
+                                                                </span>
+                                                            )}
                                                         </TableCell>
                                                         <TableCell>
                                                             <ArrowRight className="h-4 w-4 text-muted-foreground" />
@@ -492,6 +533,7 @@ export default function AttendancePage() {
                     classDetail={selectedClass}
                     onBack={() => setSelectedSession(null)}
                     onRecordsChange={setRecords}
+                    onSessionUpdated={handleSessionUpdated}
                 />
             )}
 

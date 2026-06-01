@@ -23,6 +23,8 @@ import {
 import { buildCourseRosterDocument, rosterToFlatCsv } from '../../lib/admin/rosterReportDocuments';
 import { collectCharts } from '../../lib/admin/chartCapture';
 import { RosterExportBar } from '../../components/admin/roster/RosterExportBar';
+import { validateAttendanceDateRange } from '@/lib/admin/validateDateRange';
+import { sessionInDateRange } from '@/lib/admin/dates';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
@@ -178,6 +180,11 @@ export default function CourseAttendanceReport() {
       setError('Please select both a course and a class.');
       return;
     }
+    const dateErr = validateAttendanceDateRange(dateFrom, dateTo);
+    if (dateErr) {
+      setError(dateErr);
+      return;
+    }
     setError('');
     setLoading(true);
     setReport(null);
@@ -188,14 +195,9 @@ export default function CourseAttendanceReport() {
         (s) => s.course_id === courseId && s.class_id === classId && s.status === 'finished'
       );
 
-      if (dateFrom) {
-        const from = new Date(dateFrom + 'T00:00:00.000Z');
-        sessions = sessions.filter((s) => new Date(s.created_at) >= from);
-      }
-      if (dateTo) {
-        const to = new Date(dateTo + 'T23:59:59.999Z');
-        sessions = sessions.filter((s) => new Date(s.created_at) <= to);
-      }
+      sessions = sessions.filter((s) =>
+        sessionInDateRange(s.created_at, dateFrom, dateTo)
+      );
 
       if (sessions.length === 0) {
         setError('No finished sessions found for the selected filters.');
@@ -501,7 +503,10 @@ export default function CourseAttendanceReport() {
           <CardTitle className="text-base flex items-center gap-2">
             <Calendar size={16} /> Report Configuration
           </CardTitle>
-          <CardDescription>Select a course and class to generate the full performance report.</CardDescription>
+          <CardDescription>
+            Select a course and class. Optionally set a date range (inclusive); leave dates empty
+            for all finished sessions.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -536,7 +541,9 @@ export default function CourseAttendanceReport() {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">From date</label>
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                From date (optional)
+              </label>
               <input
                 type="date"
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -546,7 +553,9 @@ export default function CourseAttendanceReport() {
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">To date</label>
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                To date (optional)
+              </label>
               <input
                 type="date"
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"

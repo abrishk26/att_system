@@ -27,6 +27,9 @@ import {
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
+import { validateAttendanceDateRange } from '@/lib/admin/validateDateRange';
+import { sessionInDateRange } from '@/lib/admin/dates';
+import { isReportableSession } from '@/lib/sessionStatus';
 
 export interface StudentAttendanceSummary {
   student_id: string;
@@ -52,10 +55,6 @@ export interface SessionStat {
   rate: number;
 }
 
-function isCompletedSession(status: string) {
-  return status === 'finished' || status === 'completed';
-}
-
 export default function ReportsPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -74,6 +73,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [reportGenerated, setReportGenerated] = useState(false);
+  const [dateError, setDateError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchInitialData();
@@ -115,33 +115,46 @@ export default function ReportsPage() {
 
   const generateReport = async () => {
     if (!selectedCourse || !selectedClass) return;
+    const dateErr = validateAttendanceDateRange(dateFrom, dateTo);
+    if (dateErr) {
+      setDateError(dateErr);
+      return;
+    }
+    setDateError(null);
     setGenerating(true);
     setReportGenerated(false);
 
     try {
-      const filters: { course_id?: string; class_id?: string; date?: string } = {
+      const filters: { course_id?: string; class_id?: string } = {
         course_id: selectedCourse,
         class_id: selectedClass,
       };
-      if (dateFrom) filters.date = dateFrom;
 
       let filtered = await api.instructorSessions(filters);
-      if (dateFrom) {
-        filtered = filtered.filter((s) => new Date(s.created_at) >= new Date(dateFrom));
+      const inRange = filtered.filter((s) =>
+        sessionInDateRange(s.created_at, dateFrom, dateTo)
+      );
+
+      const reportableSessions = inRange.filter((s) => isReportableSession(s.status));
+      if (inRange.length > 0 && reportableSessions.length === 0) {
+        setDateError(
+          `${inRange.length} session(s) match the date range but none are reportable. Finish the session or ensure it is not cancelled.`
+        );
+        setGenerating(false);
+        return;
       }
-      if (dateTo) {
-        const end = new Date(dateTo);
-        end.setHours(23, 59, 59);
-        filtered = filtered.filter((s) => new Date(s.created_at) <= end);
+      if (reportableSessions.length === 0) {
+        setDateError('No sessions found for the selected course, class, and date range.');
+        setGenerating(false);
+        return;
       }
 
-      const finishedSessions = filtered.filter((s) => isCompletedSession(s.status));
-      setSessions(finishedSessions);
+      setSessions(reportableSessions);
 
       const allRecords: AttendanceRecordWithStudent[] = [];
       const stats: SessionStat[] = [];
 
-      for (const sess of finishedSessions) {
+      for (const sess of reportableSessions) {
         try {
           const recs = await api.sessionRecords(sess.id);
           allRecords.push(...recs);
@@ -297,7 +310,7 @@ export default function ReportsPage() {
       title: 'Section Attendance Analytics Report',
       subtitle: `${courseName} — ${classLabel} · ${dateRange}`,
       generated_at: new Date().toISOString(),
-      executive_summary: `Analysis of ${sessions.length} completed session(s) for ${totalStudents} students. Average attendance is ${avgAttendance}%. Status breakdown: ${statusCounts.present} present, ${statusCounts.late} late, ${statusCounts.absent} absent, ${statusCounts.excused} excused. ${atRisk} student(s) are below 75% and ${perfect} have perfect attendance. Export chart images separately as PNG from the Charts tab.`,
+      executive_summary: `Analysis of ${sessions.length} session(s) for ${totalStudents} students. Average attendance is ${avgAttendance}%. Status breakdown: ${statusCounts.present} present, ${statusCounts.late} late, ${statusCounts.absent} absent, ${statusCounts.excused} excused. ${atRisk} student(s) are below 75% and ${perfect} have perfect attendance. Export chart images separately as PNG from the Charts tab.`,
       kpis: [
         {
           title: 'Key metrics',
@@ -416,13 +429,34 @@ export default function ReportsPage() {
                 </SelectContent>
               </Select>
             </FilterField>
-            <FilterField label="From">
-              <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setReportGenerated(false); }} />
+            <FilterField label="From (optional)">
+              <Input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => {
+                  setDateFrom(e.target.value);
+                  setReportGenerated(false);
+                  setDateError(null);
+                }}
+              />
             </FilterField>
-            <FilterField label="To">
-              <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setReportGenerated(false); }} />
+            <FilterField label="To (optional)">
+              <Input
+                type="date"
+                value={dateTo}
+                onChange={(e) => {
+                  setDateTo(e.target.value);
+                  setReportGenerated(false);
+                  setDateError(null);
+                }}
+              />
             </FilterField>
           </div>
+          {dateError && (
+            <p className="text-sm text-destructive" role="alert">
+              {dateError}
+            </p>
+          )}
           <div className="flex justify-end border-t border-border pt-4">
             <Button onClick={generateReport} disabled={!selectedCourse || !selectedClass || generating}>
               {generating ? (
@@ -569,7 +603,7 @@ export default function ReportsPage() {
                 <CardHeader className="flex flex-row items-center justify-between">
                   <div>
                     <CardTitle className="text-base">Session breakdown table</CardTitle>
-                    <CardDescription>Attendance counts and rate for each completed session.</CardDescription>
+                    <CardDescription>Attendance counts and rate for each session in range.</CardDescription>
                   </div>
                   <Button variant="outline" size="sm" onClick={exportSessionsCsv}>
                     <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV

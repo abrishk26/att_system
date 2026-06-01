@@ -12,7 +12,7 @@ pub async fn university_intelligence_handler(
     _: AdminClaims,
     Query(q): Query<AnalyticsQuery>,
 ) -> Result<(StatusCode, Json<analytics::UniversityIntelligence>), (StatusCode, Json<ErrorResponse>)> {
-    let intel = analytics::university_intelligence(&state, &q).await?;
+    let intel = analytics::university_intelligence(&state, &q, None).await?;
     Ok((StatusCode::OK, Json(intel)))
 }
 

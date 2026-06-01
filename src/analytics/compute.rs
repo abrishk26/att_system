@@ -18,6 +18,44 @@ pub struct FilteredSnapshot {
     pub taps: Vec<TapLog>,
 }
 
+/// Restrict sessions (and dependent records/taps) to a batch year and/or section.
+pub fn filter_snapshot_by_cohort(
+    mut f: FilteredSnapshot,
+    class_meta: impl Fn(Uuid) -> Option<(i32, i32)>,
+    filter_year: Option<i32>,
+    filter_section: Option<i32>,
+) -> FilteredSnapshot {
+    if filter_year.is_none() && filter_section.is_none() {
+        return f;
+    }
+    let session_ids: HashSet<Uuid> = f
+        .sessions
+        .iter()
+        .filter(|s| {
+            class_meta(s.class_id)
+                .map(|(y, sec)| {
+                    if let Some(fy) = filter_year {
+                        if y != fy {
+                            return false;
+                        }
+                    }
+                    if let Some(fs) = filter_section {
+                        if sec != fs {
+                            return false;
+                        }
+                    }
+                    true
+                })
+                .unwrap_or(false)
+        })
+        .map(|s| s.id)
+        .collect();
+    f.sessions.retain(|s| session_ids.contains(&s.id));
+    f.records.retain(|r| session_ids.contains(&r.session_id));
+    f.taps.retain(|t| session_ids.contains(&t.session_id));
+    f
+}
+
 pub fn apply_time_filter(
     raw: super::snapshot::RawSnapshot,
     from: Option<DateTime<Utc>>,

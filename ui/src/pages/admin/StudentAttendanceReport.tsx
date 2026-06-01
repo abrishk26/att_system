@@ -23,6 +23,8 @@ import {
 } from '../../lib/admin/rosterReportDocuments';
 import { collectCharts } from '../../lib/admin/chartCapture';
 import { RosterExportBar } from '../../components/admin/roster/RosterExportBar';
+import { validateAttendanceDateRange } from '@/lib/admin/validateDateRange';
+import { sessionInDateRange } from '@/lib/admin/dates';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Skeleton } from '../../components/ui/skeleton';
@@ -205,13 +207,17 @@ export default function StudentAttendanceReport() {
       setError('Please select both a course and a class/section.');
       return;
     }
+    const dateErr = validateAttendanceDateRange(dateFrom, dateTo);
+    if (dateErr) {
+      setError(dateErr);
+      return;
+    }
     setError('');
     setLoading(true);
     setRows([]);
     setReportMeta(null);
 
     try {
-      // 1. Fetch all sessions and filter
       const allSessions: Session[] = await api.allSessions();
       let filtered = allSessions.filter(
         (s) =>
@@ -220,14 +226,9 @@ export default function StudentAttendanceReport() {
           s.status === 'finished'
       );
 
-      if (dateFrom) {
-        const from = new Date(dateFrom + 'T00:00:00.000Z');
-        filtered = filtered.filter((s) => new Date(s.created_at) >= from);
-      }
-      if (dateTo) {
-        const to = new Date(dateTo + 'T23:59:59.999Z');
-        filtered = filtered.filter((s) => new Date(s.created_at) <= to);
-      }
+      filtered = filtered.filter((s) =>
+        sessionInDateRange(s.created_at, dateFrom, dateTo)
+      );
 
       if (filtered.length === 0) {
         setError('No finished sessions found for the selected filters.');
@@ -558,7 +559,10 @@ export default function StudentAttendanceReport() {
           <CardTitle className="text-base flex items-center gap-2">
             <Calendar size={16} /> Report Filters
           </CardTitle>
-          <CardDescription>Select course, class and optional date range, then generate.</CardDescription>
+          <CardDescription>
+            Select course and class. Optionally filter by date range (inclusive); leave empty for
+            all finished sessions.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -605,7 +609,7 @@ export default function StudentAttendanceReport() {
             {/* Date from */}
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                From date
+                From date (optional)
               </label>
               <input
                 type="date"
@@ -615,10 +619,9 @@ export default function StudentAttendanceReport() {
               />
             </div>
 
-            {/* Date to */}
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                To date
+                To date (optional)
               </label>
               <input
                 type="date"

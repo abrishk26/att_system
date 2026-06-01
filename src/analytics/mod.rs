@@ -14,9 +14,9 @@ use crate::types::{AppState, ErrorResponse};
 
 use compute::{
     anomalies, apply_time_filter, batch_section_course_rows, batch_section_rows, build_kpi,
-    by_day_of_week, by_hour, cohort_by_class_year, course_rows, daily_timeline, instructor_rows,
-    section_rows, session_heatmap, status_distribution as status_dist_fn, student_risk_rows,
-    tap_audit,
+    by_day_of_week, by_hour, cohort_by_class_year, course_rows, daily_timeline,
+    filter_snapshot_by_cohort, instructor_rows, section_rows, session_heatmap,
+    status_distribution as status_dist_fn, student_risk_rows, tap_audit,
 };
 use enrich::EnrichCache;
 use snapshot::load_snapshot;
@@ -59,18 +59,41 @@ fn parse_range(
     Ok((from, to))
 }
 
+/// Optional cohort scope: limit metrics to sessions in matching batch year / section.
+pub type CohortScope = (Option<i32>, Option<i32>);
+
 pub async fn university_intelligence(
     state: &AppState,
     q: &AnalyticsQuery,
+    cohort: Option<CohortScope>,
 ) -> Result<UniversityIntelligence, (StatusCode, Json<ErrorResponse>)> {
     let (from, to) = parse_range(q)?;
     let raw = load_snapshot(state).await?;
-    let f = apply_time_filter(raw, from, to);
+    let mut f = apply_time_filter(raw, from, to);
+
+    let mut cache = EnrichCache::new();
+
+    let mut class_meta_map: std::collections::HashMap<uuid::Uuid, (i32, i32)> =
+        std::collections::HashMap::new();
+    for s in &f.sessions {
+        if class_meta_map.contains_key(&s.class_id) {
+            continue;
+        }
+        if let Ok(Some(cl)) = cache.ensure_class(state, s.class_id).await {
+            class_meta_map.insert(s.class_id, (cl.year, cl.section));
+        }
+    }
+
+    if let Some((filter_year, filter_section)) = cohort {
+        if filter_year.is_some() || filter_section.is_some() {
+            let meta = &class_meta_map;
+            f = filter_snapshot_by_cohort(f, |cid| meta.get(&cid).copied(), filter_year, filter_section);
+        }
+    }
+
     let sessions = &f.sessions;
     let records = &f.records;
     let taps = &f.taps;
-
-    let mut cache = EnrichCache::new();
 
     let kpi = build_kpi(sessions, records);
     let status_distribution = status_dist_fn(records);
@@ -141,16 +164,6 @@ pub async fn university_intelligence(
         }
     }
 
-    let mut class_meta_map: std::collections::HashMap<uuid::Uuid, (i32, i32)> =
-        std::collections::HashMap::new();
-    for s in sessions {
-        if class_meta_map.contains_key(&s.class_id) {
-            continue;
-        }
-        if let Ok(Some(cl)) = cache.ensure_class(state, s.class_id).await {
-            class_meta_map.insert(s.class_id, (cl.year, cl.section));
-        }
-    }
     let class_meta = |cid: uuid::Uuid| class_meta_map.get(&cid).copied();
     let cohort = cohort_by_class_year(sessions, records, |cid| class_meta(cid).map(|(y, _)| y));
 
@@ -346,7 +359,12 @@ pub async fn build_report_document(
         from: req.from.clone(),
         to: req.to.clone(),
     };
-    let intel = university_intelligence(state, &q).await?;
+    let cohort = if req.class_year.is_some() || req.section.is_some() {
+        Some((req.class_year, req.section))
+    } else {
+        None
+    };
+    let intel = university_intelligence(state, &q, cohort).await?;
     let title = match req.report_type.as_str() {
         "student_attendance" => "Student attendance intelligence",
         "instructor" => "Instructor performance report",
@@ -435,6 +453,84 @@ pub async fn build_report_document(
             });
         }
         _ => {}
+    }
+
+    if req.report_type == "student_attendance" || req.report_type == "audit" {
+        let excellent = intel
+            .students_at_risk
+            .iter()
+            .filter(|s| s.attendance_rate >= 85.0)
+            .count();
+        let warning = intel
+            .students_at_risk
+            .iter()
+            .filter(|s| s.attendance_rate >= 70.0 && s.attendance_rate < 85.0)
+            .count();
+        let critical = intel
+            .students_at_risk
+            .iter()
+            .filter(|s| s.attendance_rate < 70.0)
+            .count();
+        kpis.push(ReportKpiBlock {
+            title: "Learner attendance brackets".into(),
+            items: vec![
+                ("Excellent (≥85%)".into(), excellent.to_string()),
+                ("Warning (70–84%)".into(), warning.to_string()),
+                ("Critical (<70%)".into(), critical.to_string()),
+                (
+                    "Learners tracked".into(),
+                    intel.students_at_risk.len().to_string(),
+                ),
+            ],
+        });
+
+        let status_rows: Vec<Vec<String>> = intel
+            .status_distribution
+            .iter()
+            .map(|s| {
+                vec![
+                    s.status.clone(),
+                    s.count.to_string(),
+                    format!("{:.1}", s.pct),
+                ]
+            })
+            .collect();
+        tables.push(ReportTable {
+            title: "Attendance status distribution".into(),
+            columns: vec!["Status".into(), "Count".into(), "% of marks".into()],
+            rows: status_rows,
+        });
+
+        let high_risk: Vec<Vec<String>> = intel
+            .students_at_risk
+            .iter()
+            .filter(|s| s.predicted_low || s.risk_score >= 55.0)
+            .take(40)
+            .map(|s| {
+                vec![
+                    s.student_name.clone().unwrap_or_else(|| "Unknown".into()),
+                    format!("{:.1}", s.attendance_rate),
+                    format!("{:.1}", s.risk_score),
+                    s.max_absence_streak.to_string(),
+                    if s.predicted_low {
+                        "Yes".into()
+                    } else {
+                        "Monitor".into()
+                    },
+                ]
+            })
+            .collect();
+        tables.push(ReportTable {
+            title: "Priority intervention list".into(),
+            columns: vec![
+                "Student".into(),
+                "Attendance %".into(),
+                "Risk score".into(),
+                "Max absence streak".into(),
+                "Advise".into(),
+            ],
+            rows: high_risk,
+        });
     }
 
     if matches!(
@@ -534,7 +630,7 @@ pub async fn build_report_document(
         push_batch_report_tables(&mut tables, &intel, req.class_year, req.section);
     }
 
-    if req.report_type == "compliance" {
+    if req.report_type == "compliance" || req.report_type == "audit" {
         kpis.push(ReportKpiBlock {
             title: "Compliance proxies".into(),
             items: vec![
@@ -543,6 +639,35 @@ pub async fn build_report_document(
                 ("Excused %".into(), format!("{:.1}", intel.kpi.excused_rate)),
                 ("Duplicate NFC taps".into(), intel.tap_audit.duplicate_taps.to_string()),
                 ("Unknown card taps".into(), intel.tap_audit.unknown_card_taps.to_string()),
+                (
+                    "NFC tap success %".into(),
+                    format!("{:.1}", intel.tap_audit.success_rate),
+                ),
+            ],
+        });
+    }
+
+    if req.report_type == "audit" {
+        tables.push(ReportTable {
+            title: "Session coverage audit".into(),
+            columns: vec!["Metric".into(), "Value".into()],
+            rows: vec![
+                vec![
+                    "Finished sessions in range".into(),
+                    intel.kpi.finished_sessions.to_string(),
+                ],
+                vec![
+                    "Record completeness %".into(),
+                    format!("{:.1}", intel.kpi.record_completeness),
+                ],
+                vec![
+                    "Unique students with marks".into(),
+                    intel.kpi.unique_students.to_string(),
+                ],
+                vec![
+                    "Anomalies flagged".into(),
+                    intel.anomalies.len().to_string(),
+                ],
             ],
         });
     }

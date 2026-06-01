@@ -24,6 +24,11 @@ import { Separator } from '@/components/ui/separator';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { uniqueBatchYears, uniqueSections } from '@/lib/admin/batchAnalytics';
+import { toIsoEnd, toIsoStart } from '@/lib/admin/dates';
+import {
+  reportFilterConfig,
+  validateReportDateRange,
+} from '@/lib/admin/reportFilters';
 
 type ExportFormat = 'pdf' | 'excel_csv' | 'html_print' | 'json';
 
@@ -44,11 +49,8 @@ export default function Reports() {
   const category = REPORT_CATALOG.find((c) => c.id === categoryId) ?? REPORT_CATALOG[0];
   const meta = findReport(reportType);
 
-  const batchReport =
-    reportType === 'batch_cohort' ||
-    reportType === 'departmental' ||
-    reportType === 'comparative' ||
-    reportType === 'semester';
+  const filters = reportFilterConfig(reportType);
+  const showCohortFilters = filters.supportsCohort;
 
   useEffect(() => {
     api.universityAnalytics().then(setIntelSnapshot).catch(() => {});
@@ -79,11 +81,6 @@ export default function Reports() {
     }
   }, [categoryId, category.reports, reportType]);
 
-  const toIso = (d: string, end: boolean) => {
-    if (!d) return undefined;
-    return new Date(d + (end ? 'T23:59:59.999Z' : 'T00:00:00.000Z')).toISOString();
-  };
-
   const saveRecent = (entry: { name: string; at: string; type: string }) => {
     const next = [entry, ...recent].slice(0, 10);
     setRecent(next);
@@ -92,16 +89,22 @@ export default function Reports() {
 
   const generatePreview = async () => {
     setError(null);
+    const dateErr = validateReportDateRange(from, to);
+    if (dateErr) {
+      setError(dateErr);
+      return;
+    }
     setBusy(true);
     setPreviewDoc(null);
     try {
       const doc = await api.buildReport({
         report_type: reportType,
-        from: from ? toIso(from, false) : undefined,
-        to: to ? toIso(to, true) : undefined,
+        from: from.trim() ? toIsoStart(from) : undefined,
+        to: to.trim() ? toIsoEnd(to) : undefined,
         include_charts: false,
-        class_year: batchReport && classYear !== 'all' ? Number(classYear) : undefined,
-        section: batchReport && section !== 'all' ? Number(section) : undefined,
+        class_year:
+          showCohortFilters && classYear !== 'all' ? Number(classYear) : undefined,
+        section: showCohortFilters && section !== 'all' ? Number(section) : undefined,
       });
       setPreviewDoc(doc);
     } catch (e) {
@@ -236,26 +239,37 @@ export default function Reports() {
             <CardHeader>
               <CardTitle className="text-base">Generate</CardTitle>
               <CardDescription>
-                Leave dates empty to include all recorded sessions. For term reports, set start and
-                end of semester.
+                Leave dates empty to include all recorded sessions. When set, the range is
+                inclusive (same start and end date includes that full day).
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="from">From</Label>
-                  <Input id="from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+                  <Label htmlFor="from">From (optional)</Label>
+                  <Input
+                    id="from"
+                    type="date"
+                    value={from}
+                    onChange={(e) => setFrom(e.target.value)}
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="to">To</Label>
-                  <Input id="to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+                  <Label htmlFor="to">To (optional)</Label>
+                  <Input
+                    id="to"
+                    type="date"
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                  />
                 </div>
               </div>
-              {batchReport && (
+              {showCohortFilters && (
                 <div className="grid gap-4 sm:grid-cols-2 rounded-lg border border-border bg-muted/20 p-4">
                   <p className="sm:col-span-2 text-xs text-muted-foreground">
-                    Optional: limit batch tables to one cohort year and/or section. Leave as “All”
-                    for department-wide comparison.
+                    Optional cohort scope: limit metrics to a batch year and/or section. Leave as
+                    “All” for institution-wide totals, or pick a cohort for section-specific
+                    instructor and course data.
                   </p>
                   <div className="space-y-2">
                     <Label>Batch year</Label>
