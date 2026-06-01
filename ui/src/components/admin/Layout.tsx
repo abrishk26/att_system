@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Navigate, Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../AuthContext';
+import { PortalGuard } from '../auth/PortalGuard';
 import Sidebar from './Sidebar';
 import { Menu, LogOut, Sun, Moon } from 'lucide-react';
 import { NotificationBell } from '../NotificationBell';
@@ -16,23 +17,15 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
 export default function Layout() {
-  const { token, user, logout, isLoading } = useAuth();
+  const { user, logout } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isDark, setIsDark] = useDarkMode();
   const navigate = useNavigate();
 
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-      </div>
-    );
-  }
-
-  if (!token || !user) return <Navigate to="/admin/login" replace />;
-
-  const fullName = `${user.first_name}${user.last_name ? ` ${user.last_name}` : ''}`;
+  const fullName = user
+    ? `${user.first_name}${user.last_name ? ` ${user.last_name}` : ''}`
+    : '';
 
   const handleLogout = () => {
     logout();
@@ -40,6 +33,7 @@ export default function Layout() {
   };
 
   return (
+    <PortalGuard portal="admin">
     <div className="flex min-h-screen overflow-hidden bg-background font-sans text-foreground">
       <Sidebar
         isOpen={isSidebarOpen}
@@ -81,11 +75,11 @@ export default function Layout() {
                 >
                   <div className="hidden text-right sm:block">
                     <p className="text-xs text-muted-foreground">Department head</p>
-                    <p className="text-sm font-medium text-foreground">{user.first_name}</p>
+                    <p className="text-sm font-medium text-foreground">{user!.first_name}</p>
                   </div>
                   <Avatar className="h-9 w-9">
                     <AvatarFallback className="bg-primary text-sm font-medium text-primary-foreground">
-                      {user.first_name?.charAt(0)}
+                      {user!.first_name?.charAt(0)}
                     </AvatarFallback>
                   </Avatar>
                 </button>
@@ -94,7 +88,7 @@ export default function Layout() {
                 <DropdownMenuLabel className="font-normal">
                   <p className="font-medium">{fullName}</p>
                   <p className="text-xs capitalize text-muted-foreground">
-                    @{user.username} · {user.role}
+                    @{user!.username} · {user!.role}
                   </p>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -119,5 +113,6 @@ export default function Layout() {
         />
       )}
     </div>
+    </PortalGuard>
   );
 }

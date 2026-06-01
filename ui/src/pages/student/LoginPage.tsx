@@ -22,7 +22,7 @@ export default function StudentLoginPage() {
     setError(null);
 
     try {
-      const result = await login(username, password);
+      const result = await login(username, password, 'student');
       if (result.role !== 'student' && result.role !== 'admin') {
         logout();
         throw new Error('Access denied: Student account required.');

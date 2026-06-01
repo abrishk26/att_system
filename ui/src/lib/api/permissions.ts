@@ -1,7 +1,6 @@
 import { fetcher } from './fetcher';
+import { request } from '../../api';
 import type { PermissionRequest } from '../types/student';
-
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 type BackendPermission = {
   id: string;
@@ -93,7 +92,6 @@ export const getMyPermissions = async (studentId: string): Promise<PermissionReq
 };
 
 export const submitPermission = async (payload: SubmitPermissionPayload): Promise<PermissionRequest> => {
-  const token = localStorage.getItem('auth_token');
   const formData = new FormData();
   formData.append('session_id', payload.sessionId);
   formData.append('description', payload.description);
@@ -101,22 +99,9 @@ export const submitPermission = async (payload: SubmitPermissionPayload): Promis
     formData.append('file', payload.file);
   }
 
-  const headers = new Headers();
-  if (token) {
-    headers.append('Authorization', `Bearer ${token}`);
-  }
-
-  const response = await fetch(`${BASE_URL}/api/student/permissions`, {
+  const created = await request<BackendPermission>('/student/permissions', {
     method: 'POST',
-    headers,
     body: formData,
   });
-
-  if (!response.ok) {
-    const errorBody = await response.json().catch(() => ({}));
-    throw new Error(errorBody.message || 'Failed to submit permission request');
-  }
-
-  const created = (await response.json()) as BackendPermission;
   return mapPermission(created);
 };

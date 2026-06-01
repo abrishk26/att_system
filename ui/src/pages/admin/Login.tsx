@@ -22,7 +22,7 @@ export default function AdminLogin() {
     setError(null);
     setIsLoading(true);
     try {
-      await login(username, password);
+      await login(username, password, 'admin');
       navigate('/admin/dashboard');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Login failed. Please check your credentials.');

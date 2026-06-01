@@ -22,7 +22,7 @@ export default function InstructorLoginPage() {
     setError(null);
 
     try {
-      const result = await login(username, password);
+      const result = await login(username, password, 'instructor');
       if (result.role !== 'instructor' && result.role !== 'admin') {
         logout();
         throw new Error('Access denied: You do not have instructor permissions.');

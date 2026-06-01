@@ -1,5 +1,16 @@
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
 import type { Notification } from './lib/types/student';
+import {
+  clearSession,
+  getAccessToken,
+  getActivePortal,
+  getRefreshToken,
+  getSession,
+  updateSessionTokens,
+  type AuthPortal,
+} from './lib/authStorage';
+
+export { setActivePortal, portalFromPath, type AuthPortal } from './lib/authStorage';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -342,10 +353,13 @@ export interface ReportDocument {
 let onTokenUpdate: ((token: string | null) => void) | null = null;
 let refreshPromise: Promise<string | null> | null = null;
 
-/** Attempt to rotate tokens using the stored refresh token. */
-export async function tryRefreshSession(): Promise<string | null> {
+/** Attempt to rotate tokens for the active (or given) portal only. */
+export async function tryRefreshSession(portal?: AuthPortal | null): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
-  const refresh_token = localStorage.getItem('refresh_token');
+  const p = portal ?? getActivePortal();
+  if (!p) return null;
+
+  const refresh_token = getRefreshToken(p);
   if (!refresh_token) return null;
 
   refreshPromise = (async () => {
@@ -357,11 +371,10 @@ export async function tryRefreshSession(): Promise<string | null> {
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
-        console.warn('Token refresh failed:', res.status, text);
+        console.warn(`Token refresh failed (${p}):`, res.status, text);
         if (res.status === 401 || res.status === 403) {
-          localStorage.removeItem('access_token');
-          localStorage.removeItem('refresh_token');
-          if (onTokenUpdate) onTokenUpdate(null);
+          clearSession(p);
+          if (getActivePortal() === p && onTokenUpdate) onTokenUpdate(null);
         }
         return null;
       }
@@ -374,9 +387,14 @@ export async function tryRefreshSession(): Promise<string | null> {
         console.warn('Token refresh returned incomplete payload');
         return null;
       }
-      localStorage.setItem('access_token', data.access_token);
-      localStorage.setItem('refresh_token', data.refresh_token);
-      if (onTokenUpdate) onTokenUpdate(data.access_token);
+      const prev = getSession(p);
+      updateSessionTokens(
+        p,
+        data.access_token,
+        data.refresh_token,
+        data.role ?? prev?.role,
+      );
+      if (getActivePortal() === p && onTokenUpdate) onTokenUpdate(data.access_token);
       return data.access_token;
     } catch (err) {
       console.warn('Token refresh network error:', err);
@@ -394,7 +412,7 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 function authHeaders(token?: string, isMultipart = false): HeadersInit {
-  const t = token ?? localStorage.getItem('access_token');
+  const t = token ?? getAccessToken();
   const headers: Record<string, string> = {};
   if (t) headers['Authorization'] = `Bearer ${t}`;
   if (!isMultipart) headers['Content-Type'] = 'application/json';
@@ -423,8 +441,9 @@ export async function request<T>(path: string, options?: RequestInit, retry = tr
       });
       if (res2.ok) return res2.json();
     }
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
+    const p = getActivePortal();
+    if (p) clearSession(p);
+    if (onTokenUpdate) onTokenUpdate(null);
     throw new Error('Session expired. Please log in again.');
   }
 

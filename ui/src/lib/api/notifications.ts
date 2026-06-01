@@ -1,4 +1,5 @@
 import { api } from '../../api';
+import { getAccessToken } from '../authStorage';
 import type { Notification } from '../types/student';
 
 /**
@@ -9,7 +10,7 @@ export const getNotifications = async (
   user: { id: string; role: string },
 ): Promise<Notification[]> => {
   if (!user?.id) return [];
-  if (!localStorage.getItem('access_token')) return [];
+  if (!getAccessToken()) return [];
 
   const backendNotifs = await api.getNotifications();
 
