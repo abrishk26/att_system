@@ -6,11 +6,13 @@ import { api, tryRefreshSession } from './api';
 import type { UserProfile } from './api';
 import {
   type AuthPortal,
+  bootstrapAuthPortalFromUrl,
   clearLegacyAuthKeys,
   clearSession,
   getRefreshToken,
   getSession,
-  portalFromPath,
+  isPublicPath,
+  resolveAuthPortal,
   roleAllowedForPortal,
   sessionStorageKey,
   setActivePortal,
@@ -35,13 +37,22 @@ const Ctx = createContext<AuthCtx>(null!);
 
 clearLegacyAuthKeys();
 
+function readInitialToken(): string | null {
+  const bootPortal = bootstrapAuthPortalFromUrl();
+  if (!bootPortal) return null;
+  return getSession(bootPortal)?.access_token ?? null;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const location = useLocation();
-  const portal = useMemo(() => portalFromPath(location.pathname), [location.pathname]);
+  const portal = useMemo(
+    () => resolveAuthPortal(location.pathname),
+    [location.pathname],
+  );
 
-  const [token, setToken] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(readInitialToken);
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => !isPublicPath(location.pathname));
 
   const logout = useCallback(() => {
     if (portal) {
@@ -75,7 +86,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [logout, portal]);
 
   const loadPortalSession = useCallback(async () => {
-    setActivePortal(portal);
+    if (portal) {
+      setActivePortal(portal);
+    }
 
     if (!portal) {
       setToken(null);

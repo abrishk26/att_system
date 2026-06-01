@@ -10,7 +10,12 @@ import {
   type AuthPortal,
 } from './lib/authStorage';
 
-export { setActivePortal, portalFromPath, type AuthPortal } from './lib/authStorage';
+export {
+  setActivePortal,
+  portalFromPath,
+  resolveAuthPortal,
+  type AuthPortal,
+} from './lib/authStorage';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
