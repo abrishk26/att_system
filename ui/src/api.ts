@@ -1,4 +1,5 @@
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
+/** Empty = same host (`/api/...`). Required for SPA refresh on Render when UI+API are one service. */
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 import type { Notification } from './lib/types/student';
 import {
   clearSession,

@@ -9,6 +9,7 @@ import {
   bootstrapAuthPortalFromUrl,
   clearLegacyAuthKeys,
   clearSession,
+  migrateLegacySessionForPortal,
   getRefreshToken,
   getSession,
   isPublicPath,
@@ -34,8 +35,6 @@ interface AuthCtx {
 }
 
 const Ctx = createContext<AuthCtx>(null!);
-
-clearLegacyAuthKeys();
 
 function readInitialToken(): string | null {
   const bootPortal = bootstrapAuthPortalFromUrl();
@@ -88,7 +87,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadPortalSession = useCallback(async () => {
     if (portal) {
       setActivePortal(portal);
+      migrateLegacySessionForPortal(portal);
     }
+    clearLegacyAuthKeys();
 
     if (!portal) {
       setToken(null);

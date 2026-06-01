@@ -265,31 +265,37 @@ fn issue_tokens(
     Ok((access_token, refresh_token))
 }
 
-pub async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
+/// True for Vite-built files (`assets/*.js`, `vite.svg`, etc.), not React Router paths.
+fn is_embedded_static_asset(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    if path.starts_with("assets/") || path == "vite.svg" || path == "index.html" {
+        return true;
+    }
+    path.rsplit('/')
+        .next()
+        .map(|name| name.contains('.'))
+        .unwrap_or(false)
+}
+
+/// Client-side routes like `/instructor/courses` have no file on disk — serve the SPA shell.
+fn is_spa_client_route(path: &str) -> bool {
+    !path.is_empty() && !is_embedded_static_asset(path)
+}
+
+fn serve_embedded(path: &str, content: rust_embed::EmbeddedFile) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    (
+        [(axum::http::header::CONTENT_TYPE, mime.as_ref().to_string())],
+        content.data.into_owned(),
+    )
+        .into_response()
+}
 
-    let path = uri.path().trim_start_matches('/');
-
-    if path.starts_with("uploads/") {
-        if let Ok(data) = tokio::fs::read(path).await {
-            let mime = mime_guess::from_path(path).first_or_octet_stream();
-            return (
-                [(axum::http::header::CONTENT_TYPE, mime.as_ref().to_string())],
-                data,
-            )
-                .into_response();
-        }
-    }
-
-    if let Some(content) = Assets::get(path) {
-        let mime = mime_guess::from_path(path).first_or_octet_stream();
-        return (
-            [(axum::http::header::CONTENT_TYPE, mime.as_ref().to_string())],
-            content.data.into_owned(),
-        )
-            .into_response();
-    }
-
+fn serve_index_html() -> axum::response::Response {
+    use axum::response::IntoResponse;
     match Assets::get("index.html") {
         Some(content) => (
             [(axum::http::header::CONTENT_TYPE, "text/html".to_string())],
@@ -298,4 +304,31 @@ pub async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoRe
             .into_response(),
         None => axum::http::StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+pub async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
+    let path = uri.path().trim_start_matches('/');
+
+    if path.starts_with("uploads/") {
+        if let Ok(data) = tokio::fs::read(path).await {
+            let mime = mime_guess::from_path(path).first_or_octet_stream();
+            use axum::response::IntoResponse;
+            return (
+                [(axum::http::header::CONTENT_TYPE, mime.as_ref().to_string())],
+                data,
+            )
+                .into_response();
+        }
+    }
+
+    // React Router paths (e.g. /instructor/courses) — browser refresh must get index.html.
+    if is_spa_client_route(path) {
+        return serve_index_html();
+    }
+
+    if let Some(content) = Assets::get(path) {
+        return serve_embedded(path, content);
+    }
+
+    serve_index_html()
 }
