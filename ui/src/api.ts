@@ -342,11 +342,12 @@ export interface ReportDocument {
 let onTokenUpdate: ((token: string | null) => void) | null = null;
 let refreshPromise: Promise<string | null> | null = null;
 
-async function refreshAccessToken(): Promise<string | null> {
+/** Attempt to rotate tokens using the stored refresh token. */
+export async function tryRefreshSession(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
   const refresh_token = localStorage.getItem('refresh_token');
   if (!refresh_token) return null;
-  
+
   refreshPromise = (async () => {
     try {
       const res = await fetch(`${BASE_URL}/api/refresh`, {
@@ -355,16 +356,30 @@ async function refreshAccessToken(): Promise<string | null> {
         body: JSON.stringify({ refresh_token }),
       });
       if (!res.ok) {
-        if (onTokenUpdate) onTokenUpdate(null);
+        const text = await res.text().catch(() => '');
+        console.warn('Token refresh failed:', res.status, text);
+        if (res.status === 401 || res.status === 403) {
+          localStorage.removeItem('access_token');
+          localStorage.removeItem('refresh_token');
+          if (onTokenUpdate) onTokenUpdate(null);
+        }
         return null;
       }
-      const data = await res.json();
+      const data = (await res.json()) as {
+        access_token: string;
+        refresh_token: string;
+        role?: string;
+      };
+      if (!data.access_token || !data.refresh_token) {
+        console.warn('Token refresh returned incomplete payload');
+        return null;
+      }
       localStorage.setItem('access_token', data.access_token);
       localStorage.setItem('refresh_token', data.refresh_token);
       if (onTokenUpdate) onTokenUpdate(data.access_token);
       return data.access_token;
-    } catch {
-      if (onTokenUpdate) onTokenUpdate(null);
+    } catch (err) {
+      console.warn('Token refresh network error:', err);
       return null;
     } finally {
       refreshPromise = null;
@@ -372,6 +387,10 @@ async function refreshAccessToken(): Promise<string | null> {
   })();
 
   return refreshPromise;
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  return tryRefreshSession();
 }
 
 function authHeaders(token?: string, isMultipart = false): HeadersInit {
@@ -389,7 +408,13 @@ export async function request<T>(path: string, options?: RequestInit, retry = tr
     headers: { ...authHeaders(undefined, isMultipart), ...options?.headers }
   });
 
-  if (res.status === 401 && retry && path !== '/login' && path !== '/auth/login/nfc') {
+  if (
+    res.status === 401 &&
+    retry &&
+    path !== '/login' &&
+    path !== '/auth/login/nfc' &&
+    path !== '/refresh'
+  ) {
     const newToken = await refreshAccessToken();
     if (newToken) {
       const res2 = await fetch(`${BASE_URL}/api${path}`, {
@@ -397,21 +422,20 @@ export async function request<T>(path: string, options?: RequestInit, retry = tr
         headers: { ...authHeaders(newToken, isMultipart), ...options?.headers },
       });
       if (res2.ok) return res2.json();
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('refresh_token');
-      throw new Error('Session expired. Please log in again.');
-    } else {
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('refresh_token');
-      throw new Error('Session expired. Please log in again.');
     }
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    throw new Error('Session expired. Please log in again.');
   }
 
   if (!res.ok) {
     const text = await res.text();
     let message = `${res.status} ${res.statusText}`;
     if (res.status === 401) {
-      message = 'Invalid username or password. Please try again.';
+      message =
+        path === '/login'
+          ? 'Invalid username or password. Please try again.'
+          : 'Session expired. Please log in again.';
     } else if (res.status === 405) {
       message = 'Invalid request. Please refresh the page and try again.';
     } else if (res.status === 500) {
@@ -461,7 +485,7 @@ export const api = {
   profile: () => request<UserProfile>('/profile'),
 
   /** B-12: Token identity verification */
-  verify: () => request<{ user_id: string; role: string }>('/auth/verify'),
+  verify: () => request<{ id: string; role: string }>('/auth/verify'),
 
   // ── Schedule ─────────────────────────────────────────────────────────────────
   /** B-04: timetable for the current user */

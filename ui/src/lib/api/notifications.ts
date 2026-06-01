@@ -5,22 +5,19 @@ import type { Notification } from '../types/student';
  * Fetches notifications from the backend API.
  * This replaces the previous on-the-fly generation logic.
  */
-export const getNotifications = async (user: { id: string, role: string }): Promise<Notification[]> => {
-  if (!user || !user.id) return [];
-  
-  try {
-    const backendNotifs = await api.getNotifications();
-    
-    // Sort by created_at descending
-    return backendNotifs.sort((a, b) => {
-      const dateA = new Date(a.created_at.replace(' ', 'T')).getTime();
-      const dateB = new Date(b.created_at.replace(' ', 'T')).getTime();
-      return (isNaN(dateB) ? 0 : dateB) - (isNaN(dateA) ? 0 : dateA);
-    });
-  } catch (err) {
-    console.error('Failed to fetch notifications from backend:', err);
-    return [];
-  }
+export const getNotifications = async (
+  user: { id: string; role: string },
+): Promise<Notification[]> => {
+  if (!user?.id) return [];
+  if (!localStorage.getItem('access_token')) return [];
+
+  const backendNotifs = await api.getNotifications();
+
+  return backendNotifs.sort((a, b) => {
+    const dateA = new Date(a.created_at.replace(' ', 'T')).getTime();
+    const dateB = new Date(b.created_at.replace(' ', 'T')).getTime();
+    return (isNaN(dateB) ? 0 : dateB) - (isNaN(dateA) ? 0 : dateA);
+  });
 };
 
 /**

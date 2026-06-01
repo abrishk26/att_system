@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { Bell, CheckCheck } from 'lucide-react';
-import { useNotifs } from '../hooks/student/useNotifs';
+import { useNotifications } from '../contexts/NotificationsContext';
 import { useAuth } from '../AuthContext';
 import type { Notification } from '../lib/types/student';
 
 export function NotificationBell() {
   const { user } = useAuth();
-  const { notifications, unreadCount, markRead, markAllRead } = useNotifs(user);
+  const { notifications, unreadCount, markRead, markAllRead } = useNotifications();
   const [isOpen, setIsOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 

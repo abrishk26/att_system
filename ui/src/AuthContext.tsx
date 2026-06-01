@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { api } from './api';
+import { api, tryRefreshSession } from './api';
 import type { UserProfile } from './api';
 
 interface AuthCtx {
@@ -15,9 +15,10 @@ interface AuthCtx {
 const Ctx = createContext<AuthCtx>(null!);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(localStorage.getItem('access_token'));
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('access_token'));
   const [user, setUser] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const initStarted = useRef(false);
 
   const logout = useCallback(() => {
     localStorage.removeItem('access_token');
@@ -38,44 +39,78 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [logout]);
 
   useEffect(() => {
+    if (initStarted.current) return;
+    initStarted.current = true;
+
     async function initAuth() {
-      if (!token) {
+      const storedAccess = localStorage.getItem('access_token');
+      const storedRefresh = localStorage.getItem('refresh_token');
+
+      if (!storedAccess && !storedRefresh) {
         setIsLoading(false);
         return;
       }
 
       setIsLoading(true);
       try {
-        // 1. Verify token identity and role
-        const { role } = await api.verify();
-        
-        // 2. Fetch full profile
+        // Rotate tokens before protected calls when a refresh token exists
+        if (storedRefresh) {
+          const fresh = await tryRefreshSession();
+          if (fresh) {
+            setToken(fresh);
+          } else if (!storedAccess) {
+            logout();
+            return;
+          }
+        }
+
+        const verify = await api.verify();
         const profile = await api.profile();
-        
-        // 3. Force consistency check
-        if (profile.role !== role) {
-          console.error('Role mismatch detected between token and profile. Logging out for security.', { tokenRole: role, profileRole: profile.role });
+
+        if (profile.role !== verify.role) {
+          console.error('Role mismatch between token and profile. Logging out.', {
+            tokenRole: verify.role,
+            profileRole: profile.role,
+          });
           logout();
           return;
         }
 
         setUser(profile);
+        setToken(localStorage.getItem('access_token'));
       } catch (error) {
         console.error('Auth initialization failed:', error);
+        // One more refresh attempt if verify/profile failed with expired access token
+        const recovered = await tryRefreshSession();
+        if (recovered) {
+          try {
+            const verify = await api.verify();
+            const profile = await api.profile();
+            if (profile.role === verify.role) {
+              setUser(profile);
+              setToken(recovered);
+              return;
+            }
+          } catch {
+            /* fall through to logout */
+          }
+        }
         logout();
       } finally {
         setIsLoading(false);
       }
     }
 
-    initAuth();
-  }, [token, logout]);
+    void initAuth();
+  }, [logout]);
 
   const login = async (username: string, password: string) => {
     const tokens = await api.login(username, password);
     localStorage.setItem('access_token', tokens.access_token);
     localStorage.setItem('refresh_token', tokens.refresh_token);
     setToken(tokens.access_token);
+    const profile = await api.profile();
+    setUser(profile);
     return tokens;
   };
 

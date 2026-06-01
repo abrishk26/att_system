@@ -1,5 +1,4 @@
-import { useOutletContext } from 'react-router-dom';
-import { useNotifs } from '../../hooks/student/useNotifs';
+import { useNotifications } from '../../contexts/NotificationsContext';
 import { NotificationListItem } from '../../components/student/home/NotificationListItem';
 import { Bell, CheckCheck } from 'lucide-react';
 import { PageHeader } from '@/components/instructor/PageHeader';
@@ -8,11 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function NotificationsPage() {
-  const { studentId } = useOutletContext<{ studentId: string }>();
-  const { notifications, markAllRead, markRead, unreadCount, isLoading } = useNotifs({
-    id: studentId,
-    role: 'student',
-  });
+  const { notifications, markAllRead, markRead, unreadCount, isLoading } = useNotifications();
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">

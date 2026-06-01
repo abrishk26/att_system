@@ -89,29 +89,34 @@ pub async fn refresh_handler(
     let claims = key
         .verify_token::<CustomClaims>(&payload.refresh_token, None)
         .map_err(|e| {
-            log::error!("Error verifying token: {}", e);
+            log::error!("Error verifying refresh token: {}", e);
             (
                 StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse { message: "invalid refresh token".to_string() }),
+                Json(ErrorResponse { message: "invalid or expired refresh token".to_string() }),
             )
         })?;
 
-    // Check token denylist
-    let jti = claims.jwt_id.clone().unwrap_or_default();
-    if !jti.is_empty() {
-        let mut conn = state.pool.get().await.map_err(internal_error)?;
-        let denied: bool = token_denylist::table
-            .filter(token_denylist::jti.eq(&jti))
-            .count()
-            .get_result::<i64>(&mut conn)
-            .await
-            .map_err(internal_error)? > 0;
-
-        if denied {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse { message: "token has been revoked".to_string() }),
-            ));
+    // Check token denylist (skip if DB unavailable — do not block refresh with 500)
+    if let Some(jti) = claims.jwt_id.clone().filter(|s| !s.is_empty()) {
+        match state.pool.get().await {
+            Ok(mut conn) => {
+                let denied = token_denylist::table
+                    .filter(token_denylist::jti.eq(&jti))
+                    .count()
+                    .get_result::<i64>(&mut conn)
+                    .await
+                    .unwrap_or(0)
+                    > 0;
+                if denied {
+                    return Err((
+                        StatusCode::UNAUTHORIZED,
+                        Json(ErrorResponse { message: "token has been revoked".to_string() }),
+                    ));
+                }
+            }
+            Err(e) => {
+                log::warn!("Token denylist check skipped (database unavailable): {}", e);
+            }
         }
     }
 
@@ -235,7 +240,7 @@ fn issue_tokens(
 
     let access_claims = Claims::with_custom_claims(
         CustomClaims { role: role.to_string() },
-        Duration::from_mins(5),
+        Duration::from_hours(8),
     )
     .with_subject(user_id)
     .with_jwt_id(uuid::Uuid::now_v7().to_string());

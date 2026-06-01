@@ -516,7 +516,12 @@ pub async fn get_student_dashboard_metrics_handler(
 ) -> Result<(StatusCode, Json<crate::models::StudentDashboardMetrics>), (StatusCode, Json<ErrorResponse>)> {
     use diesel_async::RunQueryDsl;
     let mut conn = state.pool.get().await.map_err(internal_error)?;
-    let student_uuid = Uuid::parse_str(&user_id).unwrap();
+    let student_uuid = Uuid::parse_str(&user_id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { message: "invalid user id".into() }),
+        )
+    })?;
     let records = attendance_record::table.filter(attendance_record::student_id.eq(student_uuid)).load::<AttendanceRecord>(&mut conn).await.map_err(internal_error)?;
     let total = records.len() as f64;
     let accounted = records.iter().filter(|r| r.status == "present" || r.status == "late").count() as f64;

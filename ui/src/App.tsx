@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './AuthContext';
+import { NotificationsProvider } from './contexts/NotificationsContext';
 
 // Landing Page
 import LandingPage from './pages/LandingPage';
@@ -53,6 +54,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <NotificationsProvider>
         <Routes>
           {/* Landing Page */}
           <Route path="/" element={<LandingPage />} />
@@ -105,6 +107,7 @@ export default function App() {
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </NotificationsProvider>
       </AuthProvider>
     </BrowserRouter>
   );

@@ -1,16 +1,16 @@
 import React from 'react';
 import { Bell, UserCircle, LogOut, LayoutDashboard } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useNotifs } from '../../../hooks/student/useNotifs';
+import { useNotifications } from '../../../contexts/NotificationsContext';
 
 interface TopBarProps {
   studentName: string;
   studentId?: string;
 }
 
-export const TopBar: React.FC<TopBarProps> = ({ studentName, studentId = 'student-001' }) => {
+export const TopBar: React.FC<TopBarProps> = ({ studentName }) => {
   const navigate = useNavigate();
-  const { unreadCount } = useNotifs({ id: studentId, role: 'student' });
+  const { unreadCount } = useNotifications();
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',

@@ -31,15 +31,24 @@ pub async fn get_notifications_handler(
         (StatusCode::BAD_REQUEST, Json(ErrorResponse { message: "Invalid user ID".into() }))
     })?;
 
-    let notifs = notifications::table
+    match notifications::table
         .filter(notifications::user_id.eq(user_uuid))
         .order(notifications::created_at.desc())
         .limit(50)
         .load::<Notification>(&mut conn)
         .await
-        .map_err(internal_error)?;
-
-    Ok((StatusCode::OK, Json(notifs)))
+    {
+        Ok(notifs) => Ok((StatusCode::OK, Json(notifs))),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("does not exist") {
+                log::warn!("notifications table missing — returning empty list");
+                return Ok((StatusCode::OK, Json(Vec::new())));
+            }
+            log::error!("Failed to load notifications for {}: {}", user_uuid, e);
+            Err(internal_error(e))
+        }
+    }
 }
 
 pub async fn mark_notification_read_handler(
